@@ -1,0 +1,97 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - bodyclose
+    - nilerr
+    - nilnil
+    - nilnesserr
+    - errorlint
+    - durationcheck
+    - makezero
+    - reassign
+    - forcetypeassert
+    - noctx
+    - fatcontext
+    # Modern Go idioms (1.22+)
+    - modernize
+    - intrange
+    - copyloopvar
+    - exptostd
+    - usestdlibvars
+    - perfsprint
+    - mirror
+    - prealloc
+    # Error handling discipline
+    - err113
+    - wrapcheck
+    - errname
+    # Style and maintainability
+    - revive
+    - gocritic
+    - misspell
+    - whitespace
+    - nakedret
+    - unconvert
+    - unparam
+    - wastedassign
+    - godot
+    - nolintlint
+    - recvcheck
+    - sloglint
+    - loggercheck
+    - nlreturn
+    - grouper
+    - wsl_v5
+    - noinlineerr
+    - errchkjson
+    # Security
+    - gosec
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: error-return
+        - name: error-naming
+        - name: unused-parameter
+        - name: empty-block
+        - name: superfluous-else
+        - name: time-equal
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+
+    nakedret:
+      max-func-lines: 0
+
+    godot:
+      scope: declarations
+
+    grouper:
+      const-require-grouping: true
+      var-require-grouping: true
+
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+
+    gosec:
+      excludes:
+        - G204  # subprocess launched with variable — intentional (claude CLI invocation with sanitized model ID)
+        - G702  # taint analysis: model is validated by sanitizeModelID (regex allowlist) before reaching exec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

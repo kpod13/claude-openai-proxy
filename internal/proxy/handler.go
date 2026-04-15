@@ -2,10 +2,25 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+)
+
+const (
+	headerContentType   = "Content-Type"
+	headerCacheControl  = "Cache-Control"
+	headerXAccelBuffering = "X-Accel-Buffering"
+
+	mimeJSON = "application/json"
+	mimeSSE  = "text/event-stream"
+)
+
+var (
+	// errUnsupportedRole is returned when a message has an unrecognised role.
+	errUnsupportedRole = errors.New("unsupported message role")
 )
 
 // Handler holds shared state for the proxy HTTP handlers.
@@ -14,47 +29,60 @@ type Handler struct {
 }
 
 // Models handles GET /v1/models.
-func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Models(w http.ResponseWriter, _ *http.Request) {
 	list := ModelList{
 		Object: "list",
 		Data:   h.Registry.List(),
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+
+	w.Header().Set(headerContentType, mimeJSON)
+
+	err := json.NewEncoder(w).Encode(list)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("encode error: %v", err), http.StatusInternalServerError)
+
+		return
+	}
 }
 
 // ChatCompletions handles POST /v1/chat/completions.
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+
 		return
 	}
 
 	modelID, err := h.Registry.Resolve(req.Model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+
 		return
 	}
 
 	prompt, err := serializeMessages(req.Messages)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+
 		return
 	}
 
 	if req.Stream {
 		h.handleStreaming(w, r, modelID, prompt)
 	} else {
-		h.handleBlocking(w, modelID, prompt)
+		h.handleBlocking(w, r, modelID, prompt)
 	}
 }
 
 // handleBlocking runs a non-streaming completion and writes a ChatResponse.
-func (h *Handler) handleBlocking(w http.ResponseWriter, modelID, prompt string) {
-	result, err := RunBlocking(modelID, prompt)
+func (h *Handler) handleBlocking(w http.ResponseWriter, r *http.Request, modelID, prompt string) {
+	result, err := RunBlocking(r.Context(), modelID, prompt)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("claude error: %v", err), http.StatusInternalServerError)
+
 		return
 	}
 
@@ -78,19 +106,26 @@ func (h *Handler) handleBlocking(w http.ResponseWriter, modelID, prompt string) 
 		},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	w.Header().Set(headerContentType, mimeJSON)
+
+	err = json.NewEncoder(w).Encode(resp)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("encode error: %v", err), http.StatusInternalServerError)
+
+		return
+	}
 }
 
 // handleStreaming runs a streaming completion and writes SSE events.
 func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelID, prompt string) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set(headerContentType, mimeSSE)
+	w.Header().Set(headerCacheControl, "no-cache")
+	w.Header().Set(headerXAccelBuffering, "no")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+
 		return
 	}
 
@@ -98,7 +133,7 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelI
 	created := time.Now().Unix()
 
 	// Send the role delta first.
-	sendChunk(w, flusher, ChatCompletionChunk{
+	sendChunk(w, flusher, &ChatCompletionChunk{
 		ID:      id,
 		Object:  "chat.completion.chunk",
 		Created: created,
@@ -110,19 +145,23 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelI
 
 	ch, err := RunStreaming(r.Context(), modelID, prompt)
 	if err != nil {
-		fmt.Fprintf(w, "data: {\"error\": %q}\n\n", err.Error())
+		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", err.Error())
+
 		flusher.Flush()
+
 		return
 	}
 
 	for chunk := range ch {
 		if chunk.Err != nil {
-			fmt.Fprintf(w, "data: {\"error\": %q}\n\n", chunk.Err.Error())
+			_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", chunk.Err.Error())
+
 			flusher.Flush()
+
 			return
 		}
 
-		sendChunk(w, flusher, ChatCompletionChunk{
+		sendChunk(w, flusher, &ChatCompletionChunk{
 			ID:      id,
 			Object:  "chat.completion.chunk",
 			Created: created,
@@ -135,7 +174,7 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelI
 
 	// Terminating chunk with finish_reason.
 	finishReason := "stop"
-	sendChunk(w, flusher, ChatCompletionChunk{
+	sendChunk(w, flusher, &ChatCompletionChunk{
 		ID:      id,
 		Object:  "chat.completion.chunk",
 		Created: created,
@@ -145,23 +184,27 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelI
 		},
 	})
 
-	fmt.Fprint(w, "data: [DONE]\n\n")
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+
 	flusher.Flush()
 }
 
 // sendChunk serializes a chunk and writes it as an SSE event.
-func sendChunk(w http.ResponseWriter, f http.Flusher, chunk ChatCompletionChunk) {
+func sendChunk(w http.ResponseWriter, f http.Flusher, chunk *ChatCompletionChunk) {
 	data, err := json.Marshal(chunk)
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "data: %s\n\n", data)
+
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+
 	f.Flush()
 }
 
 // serializeMessages converts the OpenAI messages array into a single prompt string.
 func serializeMessages(messages []Message) (string, error) {
 	var sb strings.Builder
+
 	for _, m := range messages {
 		switch m.Role {
 		case "system":
@@ -171,8 +214,9 @@ func serializeMessages(messages []Message) (string, error) {
 		case "assistant":
 			fmt.Fprintf(&sb, "[Assistant]: %s\n", m.Content)
 		default:
-			return "", fmt.Errorf("unsupported message role or content type: %q", m.Role)
+			return "", fmt.Errorf("%w: %q", errUnsupportedRole, m.Role)
 		}
 	}
+
 	return sb.String(), nil
 }

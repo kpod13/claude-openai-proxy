@@ -4,10 +4,34 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+var (
+	// errNoJSON is returned when the CLI output contains no JSON object.
+	errNoJSON = errors.New("claude: no JSON in output")
+
+	// errInvalidModelID is returned when a model ID contains unexpected characters.
+	errInvalidModelID = errors.New("claude: invalid model ID")
+
+	// modelIDRe matches only safe Claude model ID characters (letters, digits, hyphens).
+	modelIDRe = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+)
+
+// sanitizeModelID validates and returns the model ID, allowing only letters, digits, and hyphens.
+// It returns the regex-extracted value so the result is clean from a taint perspective.
+func sanitizeModelID(model string) (string, error) {
+	safe := modelIDRe.FindString(model)
+	if safe != model {
+		return "", fmt.Errorf("%w: %q", errInvalidModelID, model)
+	}
+
+	return safe, nil
+}
 
 // CLIResult holds the output of a non-streaming claude invocation.
 type CLIResult struct {
@@ -34,13 +58,16 @@ type StreamChunk struct {
 // parseBlockingOutput parses the raw bytes from a claude --output-format json invocation.
 func parseBlockingOutput(out []byte) (*CLIResult, error) {
 	raw := strings.TrimSpace(string(out))
+
 	start := strings.Index(raw, "{")
 	if start == -1 {
-		return nil, fmt.Errorf("claude: no JSON in output")
+		return nil, errNoJSON
 	}
 
 	var res cliJSONResult
-	if err := json.Unmarshal([]byte(raw[start:]), &res); err != nil {
+
+	err := json.Unmarshal([]byte(raw[start:]), &res)
+	if err != nil {
 		return nil, fmt.Errorf("claude: parse error: %w", err)
 	}
 
@@ -52,11 +79,17 @@ func parseBlockingOutput(out []byte) (*CLIResult, error) {
 }
 
 // RunBlocking invokes claude in non-streaming mode and returns the full result.
-func RunBlocking(model, prompt string) (*CLIResult, error) {
-	cmd := exec.Command("claude",
+func RunBlocking(ctx context.Context, model, prompt string) (*CLIResult, error) {
+	safeModel, err := sanitizeModelID(model)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx,
+		"claude",
 		"--print",
 		"--output-format", "json",
-		"--model", model,
+		"--model", safeModel,
 		"--no-session-persistence",
 	)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -83,12 +116,17 @@ type streamLine struct {
 // RunStreaming invokes claude in streaming mode and returns a channel of text chunks.
 // The channel is closed when the stream ends or the context is cancelled.
 func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk, error) {
+	safeModel, err := sanitizeModelID(model)
+	if err != nil {
+		return nil, err
+	}
+
 	cmd := exec.CommandContext(ctx,
 		"claude",
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--model", model,
+		"--model", safeModel,
 		"--no-session-persistence",
 	)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -98,7 +136,8 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 		return nil, fmt.Errorf("claude stream: stdout pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	if err != nil {
 		return nil, fmt.Errorf("claude stream: start: %w", err)
 	}
 
@@ -106,7 +145,7 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 
 	go func() {
 		defer close(ch)
-		defer cmd.Wait()
+		defer func() { _ = cmd.Wait() }()
 
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
@@ -116,7 +155,9 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 			}
 
 			var sl streamLine
-			if err := json.Unmarshal([]byte(line), &sl); err != nil {
+
+			err := json.Unmarshal([]byte(line), &sl)
+			if err != nil {
 				continue // skip unparseable lines
 			}
 
@@ -137,7 +178,8 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 			}
 		}
 
-		if err := scanner.Err(); err != nil {
+		err := scanner.Err()
+		if err != nil {
 			select {
 			case ch <- StreamChunk{Err: err}:
 			case <-ctx.Done():

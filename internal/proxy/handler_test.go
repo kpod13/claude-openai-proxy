@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // --- serializeMessages ---
@@ -19,9 +22,7 @@ func TestSerializeMessages_AllRoles(t *testing.T) {
 	}
 
 	got, err := serializeMessages(msgs)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	wantLines := []string{
 		"[System]: You are helpful.",
@@ -29,10 +30,9 @@ func TestSerializeMessages_AllRoles(t *testing.T) {
 		"[Assistant]: Hi there",
 		"[User]: Bye",
 	}
+
 	for _, line := range wantLines {
-		if !strings.Contains(got, line) {
-			t.Errorf("expected output to contain %q, got:\n%s", line, got)
-		}
+		require.Contains(t, got, line)
 	}
 }
 
@@ -42,9 +42,7 @@ func TestSerializeMessages_UnsupportedRole(t *testing.T) {
 	}
 
 	_, err := serializeMessages(msgs)
-	if err == nil {
-		t.Fatal("expected error for unsupported role, got nil")
-	}
+	require.Error(t, err)
 }
 
 // --- Handler.Models ---
@@ -56,31 +54,27 @@ func TestHandlerModels(t *testing.T) {
 	})
 	h := &Handler{Registry: reg}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", http.NoBody)
+
 	w := httptest.NewRecorder()
+
 	h.Models(w, req)
 
 	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", resp.StatusCode)
-	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var list ModelList
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if list.Object != "list" {
-		t.Errorf("object: got %q, want %q", list.Object, "list")
-	}
-	if len(list.Data) != 1 {
-		t.Errorf("data length: got %d, want 1", len(list.Data))
-	}
-	if list.Data[0].ID != "claude-sonnet-4-6" {
-		t.Errorf("model id: got %q, want %q", list.Data[0].ID, "claude-sonnet-4-6")
-	}
-	if list.Data[0].OwnedBy != "anthropic" {
-		t.Errorf("owned_by: got %q, want %q", list.Data[0].OwnedBy, "anthropic")
-	}
+
+	err := json.NewDecoder(resp.Body).Decode(&list)
+	require.NoError(t, err)
+
+	require.Equal(t, "list", list.Object)
+	require.Len(t, list.Data, 1)
+	require.Equal(t, "claude-sonnet-4-6", list.Data[0].ID)
+	require.Equal(t, "anthropic", list.Data[0].OwnedBy)
 }
 
 // --- Handler.ChatCompletions error paths ---
@@ -90,15 +84,14 @@ func TestHandlerChatCompletions_MalformedJSON(t *testing.T) {
 	h := &Handler{Registry: reg}
 
 	body := strings.NewReader("{not json}")
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
 	req.Header.Set("Content-Type", "application/json")
+
 	w := httptest.NewRecorder()
 
 	h.ChatCompletions(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", w.Code)
-	}
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandlerChatCompletions_UnknownModel(t *testing.T) {
@@ -106,13 +99,12 @@ func TestHandlerChatCompletions_UnknownModel(t *testing.T) {
 	h := &Handler{Registry: reg}
 
 	body := strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
 	req.Header.Set("Content-Type", "application/json")
+
 	w := httptest.NewRecorder()
 
 	h.ChatCompletions(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", w.Code)
-	}
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }

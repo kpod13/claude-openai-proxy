@@ -1,4 +1,4 @@
-.PHONY: build run test
+.PHONY: build run test lint
 
 build:
 	go build -o bin/server ./cmd/server
@@ -8,3 +8,6 @@ run: build
 
 test:
 	go test ./...
+
+lint:
+	golangci-lint run ./...

@@ -1,11 +1,20 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
+)
+
+// Sentinel errors for model discovery.
+var (
+	errProbeNoJSON    = errors.New("no JSON in probe output")
+	errProbeNoModels  = errors.New("modelUsage is empty in probe output")
+	errUnknownModel   = errors.New("unknown model")
 )
 
 // Registry holds discovered model IDs keyed by both full ID and alias.
@@ -21,25 +30,29 @@ type cliProbeResult struct {
 }
 
 // Discover probes the claude CLI concurrently for each alias and returns a populated Registry.
-// Aliases that fail to resolve are silently skipped. Logs a fatal error if no models are found.
+// Aliases that fail to resolve are silently skipped.
 func Discover(aliases []string) *Registry {
 	type result struct {
-		alias   string
-		fullID  string
+		alias  string
+		fullID string
 	}
 
 	ch := make(chan result, len(aliases))
+
 	var wg sync.WaitGroup
 
 	for _, alias := range aliases {
 		wg.Add(1)
+
 		go func(a string) {
 			defer wg.Done()
+
 			fullID, err := probeAlias(a)
 			if err != nil {
 				// partial failure: skip this alias
 				return
 			}
+
 			ch <- result{alias: a, fullID: fullID}
 		}(alias)
 	}
@@ -52,8 +65,10 @@ func Discover(aliases []string) *Registry {
 	}
 
 	seen := map[string]bool{}
+
 	for r := range ch {
 		reg.models[r.alias] = r.fullID
+
 		reg.models[r.fullID] = r.fullID
 		if !seen[r.fullID] {
 			seen[r.fullID] = true
@@ -71,8 +86,10 @@ func Discover(aliases []string) *Registry {
 
 // probeAlias runs a minimal claude invocation to resolve an alias to its full model ID.
 func probeAlias(alias string) (string, error) {
-	cmd := exec.Command("claude", "--print", "--output-format", "json", "--model", alias,
+	cmd := exec.CommandContext(context.Background(),
+		"claude", "--print", "--output-format", "json", "--model", alias,
 		"--no-session-persistence", ".")
+
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("probe %s: %w", alias, err)
@@ -81,36 +98,44 @@ func probeAlias(alias string) (string, error) {
 	var probe cliProbeResult
 	// The output may have a leading status line; find the JSON object.
 	raw := strings.TrimSpace(string(out))
+
 	start := strings.Index(raw, "{")
 	if start == -1 {
-		return "", fmt.Errorf("probe %s: no JSON in output", alias)
+		return "", fmt.Errorf("probe %s: %w", alias, errProbeNoJSON)
 	}
-	if err := json.Unmarshal([]byte(raw[start:]), &probe); err != nil {
+
+	err = json.Unmarshal([]byte(raw[start:]), &probe)
+	if err != nil {
 		return "", fmt.Errorf("probe %s: parse error: %w", alias, err)
 	}
 
 	for fullID := range probe.ModelUsage {
 		return fullID, nil
 	}
-	return "", fmt.Errorf("probe %s: modelUsage is empty", alias)
+
+	return "", fmt.Errorf("probe %s: %w", alias, errProbeNoModels)
 }
 
 // Resolve returns the full model ID for a given name (full ID or alias).
 func (r *Registry) Resolve(name string) (string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	if fullID, ok := r.models[name]; ok {
 		return fullID, nil
 	}
-	return "", fmt.Errorf("unknown model %q", name)
+
+	return "", fmt.Errorf("%w: %q", errUnknownModel, name)
 }
 
 // List returns all discovered models as ModelObject entries.
 func (r *Registry) List() []ModelObject {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	out := make([]ModelObject, len(r.list))
 	copy(out, r.list)
+
 	return out
 }
 
@@ -118,5 +143,6 @@ func (r *Registry) List() []ModelObject {
 func (r *Registry) Len() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	return len(r.list)
 }
