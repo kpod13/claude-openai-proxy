@@ -28,7 +28,7 @@ The project SHALL follow the standard Go project layout with `cmd/` for entry po
 - **THEN** all packages compile without errors
 
 ### Requirement: Makefile provides dev targets
-The project SHALL include a `Makefile` at the root with `build`, `run`, and `test` targets.
+The project SHALL include a `Makefile` at the root with `build`, `run`, `test`, `lint`, and `ci` targets.
 
 #### Scenario: Build target compiles the binary
 - **WHEN** `make build` is executed
@@ -37,3 +37,7 @@ The project SHALL include a `Makefile` at the root with `build`, `run`, and `tes
 #### Scenario: Test target runs Go tests
 - **WHEN** `make test` is executed
 - **THEN** `go test ./...` is invoked and exits with code 0 when all tests pass
+
+#### Scenario: CI target runs the full workflow locally
+- **WHEN** `make ci` is executed on a machine with Docker and `act` installed
+- **THEN** `act` runs the GitHub Actions workflow in Docker and exits with code 0 when all jobs pass
