@@ -90,6 +90,7 @@ linters:
     gosec:
       excludes:
         - G204  # subprocess launched with variable — intentional (claude CLI invocation with sanitized model ID)
+        - G304  # file path from variable — intentional (user-supplied --config path, cleaned with filepath.Clean)
         - G702  # taint analysis: model is validated by sanitizeModelID (regex allowlist) before reaching exec
 
 issues:
