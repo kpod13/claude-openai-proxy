@@ -6,7 +6,7 @@ The repository SHALL contain a valid `go.mod` file at the root with a declared m
 - **THEN** the command exits with code 0 and reports no errors
 
 ### Requirement: Server entry point
-The project SHALL provide a `main` package under `cmd/server/main.go` that starts an HTTP server on a configurable port (default 8080).
+The project SHALL provide a `main` package under `cmd/server/main.go` that starts an HTTP server on a configurable port (default 8080) and registers the following routes: `/healthz`, `GET /v1/models`, and `POST /v1/chat/completions`.
 
 #### Scenario: Server starts and listens
 - **WHEN** the compiled binary is executed without arguments
@@ -15,6 +15,10 @@ The project SHALL provide a `main` package under `cmd/server/main.go` that start
 #### Scenario: Server responds to health check
 - **WHEN** a GET request is sent to `/healthz`
 - **THEN** the server responds with HTTP 200 and body `ok`
+
+#### Scenario: Proxy routes registered
+- **WHEN** the server starts successfully
+- **THEN** `GET /v1/models` and `POST /v1/chat/completions` return non-404 responses
 
 ### Requirement: Standard project layout
 The project SHALL follow the standard Go project layout with `cmd/` for entry points and `internal/` for private packages.
