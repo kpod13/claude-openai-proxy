@@ -6,11 +6,11 @@ The repository SHALL contain a valid `go.mod` file at the root with a declared m
 - **THEN** the command exits with code 0 and reports no errors
 
 ### Requirement: Server entry point
-The project SHALL provide a `main` package under `cmd/server/main.go` that starts an HTTP server on a configurable port (default 8080) and registers the following routes: `/healthz`, `GET /v1/models`, and `POST /v1/chat/completions`.
+The project SHALL provide a `main` package under `cmd/server/main.go` that starts an HTTP server on a configurable address (default `127.0.0.1:8080`) and registers the following routes: `/healthz`, `GET /v1/models`, and `POST /v1/chat/completions`. The listen address and model aliases SHALL be read from the config file (see `server-config` capability) before the server binds.
 
-#### Scenario: Server starts and listens
-- **WHEN** the compiled binary is executed without arguments
-- **THEN** the process binds to port 8080 and accepts TCP connections
+#### Scenario: Server starts and listens on loopback by default
+- **WHEN** the compiled binary is executed without arguments and no config file is present
+- **THEN** the process binds to `127.0.0.1:8080` and accepts TCP connections
 
 #### Scenario: Server responds to health check
 - **WHEN** a GET request is sent to `/healthz`
