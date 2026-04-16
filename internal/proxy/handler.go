@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,9 @@ var (
 
 // Handler holds shared state for the proxy HTTP handlers.
 type Handler struct {
-	Registry *Registry
+	Registry    *Registry
+	RunBlocking func(ctx context.Context, model, prompt string) (*CLIResult, error)
+	RunStreaming func(ctx context.Context, model, prompt string) (<-chan StreamChunk, error)
 }
 
 // Models handles GET /v1/models.
@@ -79,7 +82,12 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 // handleBlocking runs a non-streaming completion and writes a ChatResponse.
 func (h *Handler) handleBlocking(w http.ResponseWriter, r *http.Request, modelID, prompt string) {
-	result, err := RunBlocking(r.Context(), modelID, prompt)
+	runBlocking := h.RunBlocking
+	if runBlocking == nil {
+		runBlocking = RunBlocking
+	}
+
+	result, err := runBlocking(r.Context(), modelID, prompt)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("claude error: %v", err), http.StatusInternalServerError)
 
@@ -143,7 +151,12 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, modelI
 		},
 	})
 
-	ch, err := RunStreaming(r.Context(), modelID, prompt)
+	runStreaming := h.RunStreaming
+	if runStreaming == nil {
+		runStreaming = RunStreaming
+	}
+
+	ch, err := runStreaming(r.Context(), modelID, prompt)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "data: {\"error\": %q}\n\n", err.Error())
 

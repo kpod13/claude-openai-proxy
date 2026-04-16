@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,27 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+var (
+	errFakeClaude     = errors.New("claude failed")
+	errFakeStreamFail = errors.New("stream failed")
+	errFakeMidStream  = errors.New("mid-stream error")
+	errWriteFailed    = errors.New("write failed")
+)
+
+// brokenWriter is a ResponseWriter whose Write always fails.
+type brokenWriter struct {
+	header http.Header
+	code   int
+}
+
+func newBrokenWriter() *brokenWriter {
+	return &brokenWriter{header: make(http.Header)}
+}
+
+func (b *brokenWriter) Header() http.Header         { return b.header }
+func (b *brokenWriter) WriteHeader(code int)         { b.code = code }
+func (b *brokenWriter) Write(_ []byte) (int, error) { return 0, errWriteFailed }
 
 // --- serializeMessages ---
 
@@ -107,4 +130,240 @@ func TestHandlerChatCompletions_UnknownModel(t *testing.T) {
 	h.ChatCompletions(w, req)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandlerChatCompletions_BadRole(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{Registry: reg}
+
+	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"tool","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// --- handleBlocking ---
+
+func TestHandleBlocking_Success(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry: reg,
+		RunBlocking: func(_ context.Context, _, _ string) (*CLIResult, error) {
+			return &CLIResult{Text: "Hello!", InputTokens: 5, OutputTokens: 3}, nil
+		},
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp ChatResponse
+
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+
+	require.Equal(t, "Hello!", resp.Choices[0].Message.Content)
+	require.Equal(t, "stop", resp.Choices[0].FinishReason)
+	require.Equal(t, 5, resp.Usage.PromptTokens)
+	require.Equal(t, 3, resp.Usage.CompletionTokens)
+}
+
+func TestHandleBlocking_Error(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry: reg,
+		RunBlocking: func(_ context.Context, _, _ string) (*CLIResult, error) {
+			return nil, errFakeClaude
+		},
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// --- handleStreaming ---
+
+func makeStreamingChunks(chunks ...string) func(context.Context, string, string) (<-chan StreamChunk, error) {
+	return func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
+		ch := make(chan StreamChunk, len(chunks))
+
+		for _, c := range chunks {
+			ch <- StreamChunk{Text: c}
+		}
+
+		close(ch)
+
+		return ch, nil
+	}
+}
+
+func TestHandleStreaming_Success(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry:    reg,
+		RunStreaming: makeStreamingChunks("Hello", " world"),
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Header().Get("Content-Type"), "text/event-stream")
+
+	// Parse SSE lines and collect content deltas.
+	var contents []string
+
+	scanner := bufio.NewScanner(w.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk ChatCompletionChunk
+
+		err := json.Unmarshal([]byte(data), &chunk)
+		require.NoError(t, err)
+
+		for _, c := range chunk.Choices {
+			if c.Delta.Content != "" {
+				contents = append(contents, c.Delta.Content)
+			}
+		}
+	}
+
+	require.Equal(t, []string{"Hello", " world"}, contents)
+}
+
+func TestHandleStreaming_RunError(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry: reg,
+		RunStreaming: func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
+			return nil, errFakeStreamFail
+		},
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Contains(t, w.Body.String(), "error")
+}
+
+func TestModels_EncodeError(_ *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{Registry: reg}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", http.NoBody)
+
+	h.Models(newBrokenWriter(), req)
+}
+
+func TestHandleBlocking_DefaultRunBlocking(_ *testing.T) {
+	// Tests the `if h.RunBlocking == nil { runBlocking = RunBlocking }` branch.
+	// The real RunBlocking will fail (no claude CLI), exercising the nil-check path.
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{Registry: reg} // RunBlocking is nil → falls back to package-level
+
+	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+	w := httptest.NewRecorder()
+
+	// Call handleBlocking directly with the resolved model ID.
+	h.handleBlocking(w, req, "claude-sonnet-4-6", "[User]: hi\n")
+	// claude CLI not available → 500 error; covers the nil-check branch.
+}
+
+func TestHandleStreaming_DefaultRunStreaming(_ *testing.T) {
+	// Tests the `if h.RunStreaming == nil { runStreaming = RunStreaming }` branch.
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{Registry: reg} // RunStreaming is nil → falls back to package-level
+
+	body := strings.NewReader(`{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+	w := httptest.NewRecorder()
+
+	h.handleStreaming(w, req, "claude-sonnet-4-6", "[User]: hi\n")
+	// claude CLI not available → error written to stream; covers the nil-check branch.
+}
+
+func TestHandleBlocking_EncodeError(_ *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry: reg,
+		RunBlocking: func(_ context.Context, _, _ string) (*CLIResult, error) {
+			return &CLIResult{Text: "ok"}, nil
+		},
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	h.handleBlocking(newBrokenWriter(), req, "claude-sonnet-4-6", "[User]: hi\n")
+}
+
+func TestHandleStreaming_NoFlusher(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{Registry: reg}
+
+	body := strings.NewReader(`{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+	w := newBrokenWriter() // does not implement http.Flusher
+
+	h.handleStreaming(w, req, "claude-sonnet-4-6", "[User]: hi\n")
+	require.Equal(t, http.StatusInternalServerError, w.code)
+}
+
+func TestHandleStreaming_ChunkError(t *testing.T) {
+	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	h := &Handler{
+		Registry: reg,
+		RunStreaming: func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
+			ch := make(chan StreamChunk, 1)
+
+			ch <- StreamChunk{Err: errFakeMidStream}
+
+			close(ch)
+
+			return ch, nil
+		},
+	}
+
+	body := strings.NewReader(`{"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
+
+	w := httptest.NewRecorder()
+
+	h.ChatCompletions(w, req)
+
+	require.Contains(t, w.Body.String(), "error")
 }

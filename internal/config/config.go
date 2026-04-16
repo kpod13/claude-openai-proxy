@@ -52,8 +52,16 @@ func Load(path string) (*Config, error) {
 	return &def, nil
 }
 
-// searchPaths returns the standard config file locations in priority order.
-func searchPaths() []string {
+// searchPathsFn is the function used to get search paths; replaced in tests.
+var (
+	searchPathsFn = defaultSearchPaths
+)
+
+// searchPaths delegates to searchPathsFn so tests can inject custom paths.
+func searchPaths() []string { return searchPathsFn() }
+
+// defaultSearchPaths returns the standard config file locations in priority order.
+func defaultSearchPaths() []string {
 	paths := []string{"/etc/claude-code-openai-server/config.yaml"}
 
 	home, err := os.UserHomeDir()

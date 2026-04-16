@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 )
@@ -86,7 +85,7 @@ func Discover(aliases []string) *Registry {
 
 // probeAlias runs a minimal claude invocation to resolve an alias to its full model ID.
 func probeAlias(alias string) (string, error) {
-	cmd := exec.CommandContext(context.Background(),
+	cmd := newCommand(context.Background(),
 		"claude", "--print", "--output-format", "json", "--model", alias,
 		"--no-session-persistence", ".")
 
@@ -137,6 +136,28 @@ func (r *Registry) List() []ModelObject {
 	copy(out, r.list)
 
 	return out
+}
+
+// NewRegistry creates a Registry from a map of alias → full model ID.
+func NewRegistry(aliasToFullID map[string]string) *Registry {
+	reg := &Registry{models: make(map[string]string)}
+	seen := make(map[string]bool)
+
+	for alias, fullID := range aliasToFullID {
+		reg.models[alias] = fullID
+
+		if !seen[fullID] {
+			seen[fullID] = true
+			reg.list = append(reg.list, ModelObject{
+				ID:      fullID,
+				Object:  "model",
+				Created: 1700000000,
+				OwnedBy: "anthropic",
+			})
+		}
+	}
+
+	return reg
 }
 
 // Len returns the number of unique models in the registry.

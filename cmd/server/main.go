@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,7 +22,23 @@ var (
 	errUnsupportedSh = errors.New("unsupported shell: choose from bash, zsh, fish, powershell")
 )
 
-func main() {
+type serverDeps struct {
+	discover func(aliases []string) *proxy.Registry
+	serve    func(srv *http.Server) error
+}
+
+func defaultDeps() serverDeps {
+	return serverDeps{
+		discover: proxy.Discover,
+		serve:    func(srv *http.Server) error { return srv.ListenAndServe() },
+	}
+}
+
+func newRootCmd(stdout io.Writer) *cobra.Command {
+	return newRootCmdWith(stdout, defaultDeps())
+}
+
+func newRootCmdWith(stdout io.Writer, deps serverDeps) *cobra.Command {
 	var (
 		configPath string
 		verbose    bool
@@ -52,7 +69,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			log.Info("Discovering Claude models...")
 
-			reg := proxy.Discover(cfg.Aliases)
+			reg := deps.discover(cfg.Aliases)
 			if reg.Len() == 0 {
 				return errNoModels
 			}
@@ -83,7 +100,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			log.Info("Starting server", "addr", cfg.Listen)
 
-			err = srv.ListenAndServe()
+			err = deps.serve(srv)
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return fmt.Errorf("server error: %w", err)
 			}
@@ -91,6 +108,8 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 			return nil
 		},
 	}
+
+	rootCmd.SetOut(stdout)
 
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug-level log output")
 	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "suppress all log output")
@@ -127,13 +146,13 @@ Installation instructions:
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
 			case "bash":
-				return rootCmd.GenBashCompletion(os.Stdout)
+				return rootCmd.GenBashCompletion(stdout)
 			case "zsh":
-				return rootCmd.GenZshCompletion(os.Stdout)
+				return rootCmd.GenZshCompletion(stdout)
 			case "fish":
-				return rootCmd.GenFishCompletion(os.Stdout, true)
+				return rootCmd.GenFishCompletion(stdout, true)
 			case "powershell":
-				return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
+				return rootCmd.GenPowerShellCompletionWithDesc(stdout)
 			default:
 				return fmt.Errorf("%w: %q", errUnsupportedSh, args[0])
 			}
@@ -142,7 +161,13 @@ Installation instructions:
 
 	rootCmd.AddCommand(completionCmd)
 
-	err := rootCmd.Execute()
+	return rootCmd
+}
+
+func main() {
+	cmd := newRootCmd(os.Stdout)
+
+	err := cmd.Execute()
 	if err != nil {
 		os.Exit(1)
 	}

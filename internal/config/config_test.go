@@ -57,3 +57,38 @@ func TestLoad_ExplicitPathMissing_ReturnsError(t *testing.T) {
 	_, err := Load("/nonexistent/path/config.yaml")
 	require.Error(t, err)
 }
+
+func TestLoad_InvalidYAML_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "bad.yaml", "listen: [invalid yaml")
+
+	_, err := Load(path)
+	require.Error(t, err)
+}
+
+func TestLoad_SearchPath_ValidFile_ReturnsCfg(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "search.yaml", `listen: "0.0.0.0:7070"`)
+
+	orig := searchPathsFn
+	searchPathsFn = func() []string { return []string{path} }
+
+	t.Cleanup(func() { searchPathsFn = orig })
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+	require.Equal(t, "0.0.0.0:7070", cfg.Listen)
+}
+
+func TestLoad_SearchPath_InvalidYAML_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "broken.yaml", "listen: [bad")
+
+	orig := searchPathsFn
+	searchPathsFn = func() []string { return []string{path} }
+
+	t.Cleanup(func() { searchPathsFn = orig })
+
+	_, err := Load("")
+	require.Error(t, err)
+}
