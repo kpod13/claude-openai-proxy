@@ -3,13 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/timur/claude-code-openai-server/internal/config"
+	"github.com/timur/claude-code-openai-server/internal/logger"
 	"github.com/timur/claude-code-openai-server/internal/proxy"
 )
 
@@ -21,7 +22,13 @@ var (
 )
 
 func main() {
-	var configPath string
+	var (
+		configPath string
+		verbose    bool
+		quiet      bool
+		logFormat  string
+		log        *slog.Logger
+	)
 
 	rootCmd := &cobra.Command{
 		Use:     "claude-openai-proxy",
@@ -32,20 +39,25 @@ API backed by Claude models via the claude CLI.
 
 It translates /v1/chat/completions and /v1/models requests into Claude
 subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			log = logger.New(verbose, quiet, logFormat)
+
+			return nil
+		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			log.Println("Discovering Claude models...")
+			log.Info("Discovering Claude models...")
 
 			reg := proxy.Discover(cfg.Aliases)
 			if reg.Len() == 0 {
 				return errNoModels
 			}
 
-			log.Printf("Discovered %d model(s)", reg.Len())
+			log.Info("Models discovered", "count", reg.Len())
 
 			h := &proxy.Handler{Registry: reg}
 
@@ -69,7 +81,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 				IdleTimeout:  2 * time.Minute,
 			}
 
-			log.Printf("Starting server on %s", cfg.Listen)
+			log.Info("Starting server", "addr", cfg.Listen)
 
 			err = srv.ListenAndServe()
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -80,6 +92,9 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 		},
 	}
 
+	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable debug-level log output")
+	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "suppress all log output")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "plain", "log output format: plain or json")
 	rootCmd.Flags().StringVar(&configPath, "config", "", "path to config file (default: search standard locations)")
 
 	completionCmd := &cobra.Command{
