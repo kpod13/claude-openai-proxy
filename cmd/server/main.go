@@ -12,10 +12,21 @@ import (
 	"github.com/timur/claude-code-openai-server/internal/proxy"
 )
 
+var (
+	version = "dev"
+)
+
 func main() {
 	configPath := flag.String("config", "", "path to config file (default: search standard locations)")
+	versionFlag := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version)
+
+		return
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
