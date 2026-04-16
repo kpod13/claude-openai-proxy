@@ -20,6 +20,9 @@ var (
 
 	// modelIDRe matches only safe Claude model ID characters (letters, digits, hyphens).
 	modelIDRe = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+
+	// newCommand is the exec.CommandContext factory; replaced in tests.
+	newCommand = exec.CommandContext
 )
 
 // sanitizeModelID validates and returns the model ID, allowing only letters, digits, and hyphens.
@@ -85,7 +88,7 @@ func RunBlocking(ctx context.Context, model, prompt string) (*CLIResult, error) 
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx,
+	cmd := newCommand(ctx,
 		"claude",
 		"--print",
 		"--output-format", "json",
@@ -121,7 +124,7 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx,
+	cmd := newCommand(ctx,
 		"claude",
 		"--print",
 		"--output-format", "stream-json",
