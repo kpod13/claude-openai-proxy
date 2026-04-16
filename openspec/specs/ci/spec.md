@@ -1,9 +1,13 @@
 ### Requirement: CI workflow file exists
-The repository SHALL contain `.github/workflows/ci.yml` defining a GitHub Actions workflow.
+The repository SHALL contain `.github/workflows/ci.yml` defining a GitHub Actions CI workflow, and `.github/workflows/release.yml` defining a release workflow.
 
-#### Scenario: Workflow file present
+#### Scenario: CI workflow file present
 - **WHEN** the repository is checked out
 - **THEN** `.github/workflows/ci.yml` exists and is valid YAML
+
+#### Scenario: Release workflow file present
+- **WHEN** the repository is checked out
+- **THEN** `.github/workflows/release.yml` exists and is valid YAML
 
 ### Requirement: Workflow triggers
 The CI workflow SHALL trigger on every push to `master` and on every pull request targeting `master`.
