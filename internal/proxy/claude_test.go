@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,7 +87,7 @@ func TestVersion_Success(t *testing.T) {
 	ver, err := Version(context.Background())
 
 	require.NoError(t, err)
-	assert.Equal(t, "1.2.3 (Claude Code)", ver)
+	require.Equal(t, "1.2.3 (Claude Code)", ver)
 }
 
 func TestVersion_CommandFails(t *testing.T) {

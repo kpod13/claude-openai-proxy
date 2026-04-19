@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/kpod13/claude-openai-proxy/internal/logger"
+	"github.com/stretchr/testify/require"
 )
 
 // newLoggerWithBuf builds a plain-text logger that writes to buf.
