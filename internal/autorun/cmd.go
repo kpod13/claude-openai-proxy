@@ -1,6 +1,7 @@
 package autorun
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,15 @@ import (
 // NewCmd builds the "autorun" Cobra command with "install" and "uninstall"
 // subcommands.
 func NewCmd(stdout io.Writer) *cobra.Command {
+	return newCmdWith(stdout, New, proxy.Version)
+}
+
+// newCmdWith is the injectable constructor used in tests.
+func newCmdWith(
+	stdout io.Writer,
+	newBackend func() (Backend, error),
+	getVersion func(context.Context) (string, error),
+) *cobra.Command {
 	autorunCmd := &cobra.Command{
 		Use:   "autorun",
 		Short: "Manage user-level autostart for the proxy",
@@ -21,13 +31,17 @@ The entry runs the proxy automatically when the current user logs in.
 No root or administrator privileges are required.`,
 	}
 
-	autorunCmd.AddCommand(newInstallCmd(stdout))
-	autorunCmd.AddCommand(newUninstallCmd(stdout))
+	autorunCmd.AddCommand(newInstallCmd(stdout, newBackend, getVersion))
+	autorunCmd.AddCommand(newUninstallCmd(stdout, newBackend))
 
 	return autorunCmd
 }
 
-func newInstallCmd(stdout io.Writer) *cobra.Command {
+func newInstallCmd(
+	stdout io.Writer,
+	newBackend func() (Backend, error),
+	getVersion func(context.Context) (string, error),
+) *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
 		Short: "Register the proxy as a user-level autostart entry",
@@ -37,7 +51,7 @@ func newInstallCmd(stdout io.Writer) *cobra.Command {
 				return fmt.Errorf("autorun install: resolve binary path: %w", err)
 			}
 
-			backend, err := New()
+			backend, err := newBackend()
 			if err != nil {
 				return fmt.Errorf("autorun install: %w", err)
 			}
@@ -57,7 +71,7 @@ func newInstallCmd(stdout io.Writer) *cobra.Command {
 				return fmt.Errorf("autorun install: write config: %w", err)
 			}
 
-			claudeVer, err := proxy.Version(cmd.Context())
+			claudeVer, err := getVersion(cmd.Context())
 			if err != nil {
 				_, err = fmt.Fprintf(stdout, "Warning: could not determine Claude CLI version: %v\n", err)
 				if err != nil {
@@ -90,12 +104,12 @@ func newInstallCmd(stdout io.Writer) *cobra.Command {
 	}
 }
 
-func newUninstallCmd(stdout io.Writer) *cobra.Command {
+func newUninstallCmd(stdout io.Writer, newBackend func() (Backend, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the user-level autostart entry",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			backend, err := New()
+			backend, err := newBackend()
 			if err != nil {
 				return fmt.Errorf("autorun uninstall: %w", err)
 			}
