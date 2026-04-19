@@ -9,6 +9,7 @@ Translates `/v1/chat/completions` and `/v1/models` requests into Claude subproce
 - Drop-in OpenAI API compatibility (`/v1/chat/completions`, `/v1/models`)
 - Streaming and non-streaming responses
 - OpenAI-compatible rate limiting with `x-ratelimit-*` headers
+- User-level autostart (`autorun install`) for macOS, Linux, Windows
 - Shell autocompletion (bash, zsh, fish, PowerShell)
 - Structured logging (plain text or JSON)
 
@@ -74,6 +75,28 @@ rate_limit:
 --quiet               suppress all log output
 --log-format string   log format: plain or json (default: plain)
 ```
+
+## Autorun
+
+To start the proxy automatically when you log in:
+
+```bash
+# Register as user-level autostart entry and write default config
+claude-openai-proxy autorun install
+
+# Remove the autostart entry
+claude-openai-proxy autorun uninstall
+```
+
+The mechanism is OS-specific and requires no root privileges:
+
+| OS | Mechanism |
+|---|---|
+| macOS | `~/Library/LaunchAgents/com.claude-openai-proxy.plist` (launchd) |
+| Linux | `~/.config/systemd/user/claude-openai-proxy.service` (systemd), falls back to `~/.config/autostart/*.desktop` |
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (registry) |
+
+On first install, a default config is written to `~/.claude-code-openai-server.yaml` if it doesn't already exist. If you move or upgrade the binary, re-run `autorun install` to update the entry.
 
 ## Rate Limiting
 
