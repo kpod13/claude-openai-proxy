@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,12 +16,12 @@ func TestWriteDefaultConfigIfAbsent_CreatesFile(t *testing.T) {
 	created, err := WriteDefaultConfigIfAbsent()
 
 	require.NoError(t, err)
-	assert.True(t, created)
+	require.True(t, created)
 
 	content, err := os.ReadFile(filepath.Join(dir, defaultConfigName))
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "listen:")
-	assert.Contains(t, string(content), "127.0.0.1:8080")
+	require.Contains(t, string(content), "listen:")
+	require.Contains(t, string(content), "127.0.0.1:8080")
 }
 
 func TestWriteDefaultConfigIfAbsent_SkipsExistingFile(t *testing.T) {
@@ -39,9 +38,9 @@ func TestWriteDefaultConfigIfAbsent_SkipsExistingFile(t *testing.T) {
 	created, err := WriteDefaultConfigIfAbsent()
 
 	require.NoError(t, err)
-	assert.False(t, created)
+	require.False(t, created)
 
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, original, content)
+	require.Equal(t, original, content)
 }

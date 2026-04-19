@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,9 +17,9 @@ func TestMacOSBackend_PlistContent(t *testing.T) {
 	content, err := generatePlist(cfg)
 
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "<string>com.claude-openai-proxy</string>")
-	assert.Contains(t, string(content), "<string>/usr/local/bin/claude-openai-proxy</string>")
-	assert.Contains(t, string(content), "<true/>")
+	require.Contains(t, string(content), "<string>com.claude-openai-proxy</string>")
+	require.Contains(t, string(content), "<string>/usr/local/bin/claude-openai-proxy</string>")
+	require.Contains(t, string(content), "<true/>")
 }
 
 func TestMacOSBackend_Uninstall_Idempotent(t *testing.T) {
@@ -31,7 +30,7 @@ func TestMacOSBackend_Uninstall_Idempotent(t *testing.T) {
 	b := &macosBackend{}
 
 	err := b.Uninstall(context.Background())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	_ = os.Remove(dir) // no-op, just silence unused warning
+	_ = os.Remove(dir)
 }

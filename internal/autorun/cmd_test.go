@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,9 +69,9 @@ func TestInstallCmd_PrintsVersionAndConfirmation(t *testing.T) {
 	err := run("install")
 
 	require.NoError(t, err)
-	assert.True(t, stub.installed)
-	assert.Contains(t, buf.String(), "Claude CLI version: 1.2.3")
-	assert.Contains(t, buf.String(), "Autorun installed for")
+	require.True(t, stub.installed)
+	require.Contains(t, buf.String(), "Claude CLI version: 1.2.3")
+	require.Contains(t, buf.String(), "Autorun installed for")
 }
 
 func TestInstallCmd_VersionFailPrintsWarning(t *testing.T) {
@@ -85,8 +84,8 @@ func TestInstallCmd_VersionFailPrintsWarning(t *testing.T) {
 	err := run("install")
 
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Warning: could not determine Claude CLI version")
-	assert.Contains(t, buf.String(), "Autorun installed for")
+	require.Contains(t, buf.String(), "Warning: could not determine Claude CLI version")
+	require.Contains(t, buf.String(), "Autorun installed for")
 }
 
 func TestInstallCmd_BackendError(t *testing.T) {
@@ -99,7 +98,7 @@ func TestInstallCmd_BackendError(t *testing.T) {
 	err := run("install")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "launchctl failed")
+	require.Contains(t, err.Error(), "launchctl failed")
 }
 
 func TestInstallCmd_UnsupportedOS(t *testing.T) {
@@ -116,7 +115,7 @@ func TestInstallCmd_UnsupportedOS(t *testing.T) {
 	err := cmd.Execute()
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrUnsupportedOS))
+	require.True(t, errors.Is(err, ErrUnsupportedOS))
 }
 
 func TestInstallCmd_WritesDefaultConfig(t *testing.T) {
@@ -129,7 +128,7 @@ func TestInstallCmd_WritesDefaultConfig(t *testing.T) {
 	err := run("install")
 
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Default config written to")
+	require.Contains(t, buf.String(), "Default config written to")
 }
 
 func TestInstallCmd_SkipsExistingConfig(t *testing.T) {
@@ -145,7 +144,7 @@ func TestInstallCmd_SkipsExistingConfig(t *testing.T) {
 	err = run("install")
 
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "was not modified")
+	require.Contains(t, buf.String(), "was not modified")
 }
 
 func TestUninstallCmd_PrintsConfirmation(t *testing.T) {
@@ -155,8 +154,8 @@ func TestUninstallCmd_PrintsConfirmation(t *testing.T) {
 	err := run("uninstall")
 
 	require.NoError(t, err)
-	assert.True(t, stub.uninstalled)
-	assert.Contains(t, buf.String(), "Autorun uninstalled")
+	require.True(t, stub.uninstalled)
+	require.Contains(t, buf.String(), "Autorun uninstalled")
 }
 
 func TestUninstallCmd_BackendError(t *testing.T) {
@@ -166,5 +165,5 @@ func TestUninstallCmd_BackendError(t *testing.T) {
 	err := run("uninstall")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unload failed")
+	require.Contains(t, err.Error(), "unload failed")
 }
