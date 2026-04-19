@@ -9,10 +9,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// RateLimit holds optional rate limiting configuration.
+// Zero values for both fields mean rate limiting is disabled.
+type RateLimit struct {
+	RequestsPerMinute int `yaml:"requests_per_minute"`
+	TokensPerMinute   int `yaml:"tokens_per_minute"`
+}
+
 // Config holds server configuration loaded from a YAML file.
 type Config struct {
-	Listen  string   `yaml:"listen"`
-	Aliases []string `yaml:"aliases"`
+	Listen    string    `yaml:"listen"`
+	Aliases   []string  `yaml:"aliases"`
+	RateLimit RateLimit `yaml:"rate_limit"`
 }
 
 // defaultConfig returns built-in defaults used when no config file is found.

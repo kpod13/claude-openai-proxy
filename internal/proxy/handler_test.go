@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/timur/claude-code-openai-server/internal/ratelimit"
 )
 
 var (
@@ -366,4 +367,65 @@ func TestHandleStreaming_ChunkError(t *testing.T) {
 	h.ChatCompletions(w, req)
 
 	require.Contains(t, w.Body.String(), "error")
+}
+
+// --- Rate limit integration ---
+
+// okHandler is a trivial inner handler that always returns 200.
+var (
+	okHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+)
+
+func sendRateLimitReq(t *testing.T, handler http.Handler, bearerKey string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body := `{"model":"sonnet","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequestWithContext(
+		context.Background(), http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	if bearerKey != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerKey)
+	}
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	return w
+}
+
+func TestRateLimitMiddleware_RPMExceeded_Returns429WithHeaders(t *testing.T) {
+	handler := ratelimit.Middleware(ratelimit.New(2, 0))(okHandler)
+
+	// First two requests: allowed, headers present.
+	for i := range 2 {
+		w := sendRateLimitReq(t, handler, "test-key")
+		require.Equal(t, http.StatusOK, w.Code, "request %d should be allowed", i+1)
+		require.Equal(t, "2", w.Header().Get("X-Ratelimit-Limit-Requests"))
+		require.NotEmpty(t, w.Header().Get("X-Ratelimit-Remaining-Requests"))
+		require.NotEmpty(t, w.Header().Get("X-Ratelimit-Reset-Requests"))
+	}
+
+	// Third request exceeds RPM=2.
+	w := sendRateLimitReq(t, handler, "test-key")
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
+	require.NotEmpty(t, w.Header().Get("Retry-After"))
+	require.Equal(t, "2", w.Header().Get("X-Ratelimit-Limit-Requests"))
+	require.Equal(t, "0", w.Header().Get("X-Ratelimit-Remaining-Requests"))
+
+	var errBody struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+
+	err := json.NewDecoder(w.Body).Decode(&errBody)
+	require.NoError(t, err)
+	require.Equal(t, "requests", errBody.Error.Type)
+	require.Equal(t, "rate_limit_exceeded", errBody.Error.Code)
 }
