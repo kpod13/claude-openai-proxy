@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/timur/claude-code-openai-server/internal/proxy"
 )
 
 // NewCmd builds the "autorun" Cobra command with "install" and "uninstall"
@@ -54,6 +55,19 @@ func newInstallCmd(stdout io.Writer) *cobra.Command {
 			created, err := WriteDefaultConfigIfAbsent()
 			if err != nil {
 				return fmt.Errorf("autorun install: write config: %w", err)
+			}
+
+			claudeVer, err := proxy.Version(cmd.Context())
+			if err != nil {
+				_, err = fmt.Fprintf(stdout, "Warning: could not determine Claude CLI version: %v\n", err)
+				if err != nil {
+					return fmt.Errorf("autorun install: write output: %w", err)
+				}
+			} else {
+				_, err = fmt.Fprintf(stdout, "Claude CLI version: %s\n", claudeVer)
+				if err != nil {
+					return fmt.Errorf("autorun install: write output: %w", err)
+				}
 			}
 
 			_, err = fmt.Fprintf(stdout, "Autorun installed for %s\n", binPath)

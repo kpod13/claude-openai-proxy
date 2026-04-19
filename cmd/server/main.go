@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,13 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			claudeVer, err := proxy.Version(context.Background())
+			if err != nil {
+				log.Warn("Could not determine Claude CLI version", "err", err)
+			} else {
+				log.Info("Claude CLI", "version", claudeVer)
 			}
 
 			log.Info("Discovering Claude models...")
