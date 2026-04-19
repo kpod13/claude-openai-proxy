@@ -13,6 +13,7 @@ import (
 	"github.com/timur/claude-code-openai-server/internal/config"
 	"github.com/timur/claude-code-openai-server/internal/logger"
 	"github.com/timur/claude-code-openai-server/internal/proxy"
+	"github.com/timur/claude-code-openai-server/internal/ratelimit"
 )
 
 var (
@@ -78,6 +79,12 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			h := &proxy.Handler{Registry: reg}
 
+			limiter := ratelimit.New(
+				cfg.RateLimit.RequestsPerMinute,
+				cfg.RateLimit.TokensPerMinute,
+			)
+			rlMiddleware := ratelimit.Middleware(limiter)
+
 			mux := http.NewServeMux()
 			mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 				_, err := fmt.Fprint(w, "ok")
@@ -88,7 +95,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 				}
 			})
 			mux.HandleFunc("/v1/models", h.Models)
-			mux.HandleFunc("/v1/chat/completions", h.ChatCompletions)
+			mux.Handle("/v1/chat/completions", rlMiddleware(http.HandlerFunc(h.ChatCompletions)))
 
 			srv := &http.Server{
 				Addr:         cfg.Listen,

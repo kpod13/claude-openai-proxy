@@ -92,3 +92,26 @@ func TestLoad_SearchPath_InvalidYAML_ReturnsError(t *testing.T) {
 	_, err := Load("")
 	require.Error(t, err)
 }
+
+func TestLoad_RateLimit_Parsed(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "config.yaml", `
+rate_limit:
+  requests_per_minute: 60
+  tokens_per_minute: 10000
+`)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	require.Equal(t, 60, cfg.RateLimit.RequestsPerMinute)
+	require.Equal(t, 10000, cfg.RateLimit.TokensPerMinute)
+}
+
+func TestLoad_RateLimit_AbsentUsesDefaults(t *testing.T) {
+	cfg, err := Load("")
+	require.NoError(t, err)
+
+	require.Equal(t, 0, cfg.RateLimit.RequestsPerMinute)
+	require.Equal(t, 0, cfg.RateLimit.TokensPerMinute)
+}
