@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/timur/claude-code-openai-server/internal/proxy"
+	"github.com/kpod13/claude-openai-proxy/internal/proxy"
 )
 
 // NewCmd builds the "autorun" Cobra command with "install" and "uninstall"

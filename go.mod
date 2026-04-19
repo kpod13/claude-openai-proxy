@@ -1,4 +1,4 @@
-module github.com/timur/claude-code-openai-server
+module github.com/kpod13/claude-openai-proxy
 
 go 1.26.2
 
