@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/timur/claude-code-openai-server/internal/autorun"
 	"github.com/timur/claude-code-openai-server/internal/config"
 	"github.com/timur/claude-code-openai-server/internal/logger"
 	"github.com/timur/claude-code-openai-server/internal/proxy"
@@ -167,6 +168,7 @@ Installation instructions:
 	}
 
 	rootCmd.AddCommand(completionCmd)
+	rootCmd.AddCommand(autorun.NewCmd(stdout))
 
 	return rootCmd
 }

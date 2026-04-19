@@ -7,8 +7,9 @@ The proxy is a single Go binary. It needs to register itself as a user-level aut
 **Goals:**
 - `autorun install`: register the binary as a user-level autostart entry, write user config to default location.
 - `autorun uninstall`: remove the autostart entry.
-- Support macOS, Linux, Windows, FreeBSD.
+- Support macOS, Linux, Windows.
 - No root/admin privileges required.
+- Return a clear error on unsupported OS.
 
 **Non-Goals:**
 - System-level (global) service installation.
@@ -40,15 +41,13 @@ type Backend interface {
 | macOS | launchd user agent | `~/Library/LaunchAgents/com.claude-openai-proxy.plist` |
 | Linux | systemd user unit | `~/.config/systemd/user/claude-openai-proxy.service` |
 | Windows | Registry `HKCU\...\Run` | Key: `claude-openai-proxy` |
-| FreeBSD | cron `@reboot` | User crontab (edited via `crontab -l` / `crontab -`) |
+| other | — | Returns `ErrUnsupportedOS` |
 
 **macOS**: Write plist, then run `launchctl load` to activate immediately. Uninstall: `launchctl unload` then delete plist.
 
 **Linux**: Write `.service` file, then `systemctl --user enable --now`. Uninstall: `systemctl --user disable --now` then delete file. If systemd is not available, fall back to `~/.config/autostart/<name>.desktop` (XDG autostart).
 
 **Windows**: Use `golang.org/x/sys/windows/registry` (already available via indirect deps or added directly) to write/delete the `Run` key.
-
-**FreeBSD**: Parse current crontab, add/remove `@reboot /path/to/binary` line, write back with `crontab -`.
 
 ### Binary path resolution
 
@@ -67,4 +66,4 @@ The autostart entry runs the binary with no extra args (it will find the config 
 - **Linux without systemd**: XDG autostart fallback (`.desktop` file) requires a desktop environment. Headless Linux servers have no clean user-login hook without systemd. → Documented limitation.
 - **Windows registry writes**: Requires `golang.org/x/sys` dependency. → Small, well-maintained, widely used.
 - **Binary path moves after install**: Autostart entry points to the old path. → `install` prints a reminder; user must re-run `install` after upgrading/moving the binary.
-- **FreeBSD crontab parse fragility**: Crontab may have unusual formatting. → Parse only `@reboot` lines added by this tool (tagged with a comment marker).
+- **Unsupported OS**: FreeBSD and other platforms are not supported. `New()` returns `ErrUnsupportedOS`, and the CLI command exits with a non-zero code and an informative message.

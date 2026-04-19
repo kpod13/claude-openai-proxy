@@ -6,7 +6,7 @@ There is no way to make the proxy start automatically after user login. Users ha
 
 - Add `autorun install` CLI subcommand: writes a user-level autostart entry for the current OS and saves the user config file.
 - Add `autorun uninstall` CLI subcommand: removes the autostart entry and optionally cleans up the config.
-- Add `internal/autorun/` package with platform-specific backends: macOS (launchd), Linux (systemd user), Windows (registry), FreeBSD (cron `@reboot`).
+- Add `internal/autorun/` package with platform-specific backends: macOS (launchd), Linux (systemd user), Windows (registry). Other OS returns an unsupported error.
 - The autostart unit/entry runs the proxy at **user session level** (not system), triggered after login.
 - The user config is saved to `~/.claude-code-openai-server.yaml` (already the default search path) so the auto-started process picks it up without extra flags.
 
@@ -22,7 +22,7 @@ There is no way to make the proxy start automatically after user login. Users ha
 
 ## Impact
 
-- New package `internal/autorun/` — platform-specific install/uninstall logic, no new external dependencies.
+- New package `internal/autorun/` — platform-specific install/uninstall logic, `golang.org/x/sys` added for Windows registry.
 - `cmd/server/main.go` — register `autorun` subcommand.
 - Creates/removes OS-specific files or registry entries in the user's home directory.
 - No changes to the server's HTTP logic.
