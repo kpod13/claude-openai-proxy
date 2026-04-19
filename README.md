@@ -14,8 +14,9 @@ Translates `/v1/chat/completions` and `/v1/models` requests into Claude subproce
 
 ## Requirements
 
-- Go 1.21+
 - [Claude CLI](https://claude.ai/code) installed and authenticated (`claude --version`)
+
+> **Building from source** also requires Go 1.26+.
 
 ## Installation
 
