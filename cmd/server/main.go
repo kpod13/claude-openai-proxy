@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,10 +11,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/timur/claude-code-openai-server/internal/config"
-	"github.com/timur/claude-code-openai-server/internal/logger"
-	"github.com/timur/claude-code-openai-server/internal/proxy"
-	"github.com/timur/claude-code-openai-server/internal/ratelimit"
+	"github.com/kpod13/claude-openai-proxy/internal/autorun"
+	"github.com/kpod13/claude-openai-proxy/internal/config"
+	"github.com/kpod13/claude-openai-proxy/internal/logger"
+	"github.com/kpod13/claude-openai-proxy/internal/proxy"
+	"github.com/kpod13/claude-openai-proxy/internal/ratelimit"
 )
 
 var (
@@ -66,6 +68,13 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			claudeVer, err := proxy.Version(context.Background())
+			if err != nil {
+				log.Warn("Could not determine Claude CLI version", "err", err)
+			} else {
+				log.Info("Claude CLI", "version", claudeVer)
 			}
 
 			log.Info("Discovering Claude models...")
@@ -167,6 +176,7 @@ Installation instructions:
 	}
 
 	rootCmd.AddCommand(completionCmd)
+	rootCmd.AddCommand(autorun.NewCmd(stdout))
 
 	return rootCmd
 }

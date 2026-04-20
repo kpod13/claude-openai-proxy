@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpod13/claude-openai-proxy/internal/ratelimit"
 	"github.com/stretchr/testify/require"
-	"github.com/timur/claude-code-openai-server/internal/ratelimit"
 )
 
 var (
@@ -32,7 +32,7 @@ func newBrokenWriter() *brokenWriter {
 }
 
 func (b *brokenWriter) Header() http.Header         { return b.header }
-func (b *brokenWriter) WriteHeader(code int)         { b.code = code }
+func (b *brokenWriter) WriteHeader(code int)        { b.code = code }
 func (b *brokenWriter) Write(_ []byte) (int, error) { return 0, errWriteFailed }
 
 // --- serializeMessages ---
@@ -217,7 +217,7 @@ func makeStreamingChunks(chunks ...string) func(context.Context, string, string)
 func TestHandleStreaming_Success(t *testing.T) {
 	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
 	h := &Handler{
-		Registry:    reg,
+		Registry:     reg,
 		RunStreaming: makeStreamingChunks("Hello", " world"),
 	}
 

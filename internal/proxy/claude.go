@@ -25,6 +25,19 @@ var (
 	newCommand = exec.CommandContext
 )
 
+// Version returns the version string of the claude CLI (e.g. "1.2.3").
+// It runs `claude --version` and returns the trimmed first line of output.
+func Version(ctx context.Context) (string, error) {
+	out, err := newCommand(ctx, "claude", "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("claude --version: %w", err)
+	}
+
+	line := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+
+	return line, nil
+}
+
 // sanitizeModelID validates and returns the model ID, allowing only letters, digits, and hyphens.
 // It returns the regex-extracted value so the result is clean from a taint perspective.
 func sanitizeModelID(model string) (string, error) {

@@ -1,0 +1,130 @@
+package autorun
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/spf13/cobra"
+	"github.com/kpod13/claude-openai-proxy/internal/proxy"
+)
+
+// NewCmd builds the "autorun" Cobra command with "install" and "uninstall"
+// subcommands.
+func NewCmd(stdout io.Writer) *cobra.Command {
+	return newCmdWith(stdout, New, proxy.Version)
+}
+
+// newCmdWith is the injectable constructor used in tests.
+func newCmdWith(
+	stdout io.Writer,
+	newBackend func() (Backend, error),
+	getVersion func(context.Context) (string, error),
+) *cobra.Command {
+	autorunCmd := &cobra.Command{
+		Use:   "autorun",
+		Short: "Manage user-level autostart for the proxy",
+		Long: `autorun manages the OS-specific user-level autostart entry for the proxy.
+
+The entry runs the proxy automatically when the current user logs in.
+No root or administrator privileges are required.`,
+	}
+
+	autorunCmd.AddCommand(newInstallCmd(stdout, newBackend, getVersion))
+	autorunCmd.AddCommand(newUninstallCmd(stdout, newBackend))
+
+	return autorunCmd
+}
+
+func newInstallCmd(
+	stdout io.Writer,
+	newBackend func() (Backend, error),
+	getVersion func(context.Context) (string, error),
+) *cobra.Command {
+	return &cobra.Command{
+		Use:   "install",
+		Short: "Register the proxy as a user-level autostart entry",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			binPath, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("autorun install: resolve binary path: %w", err)
+			}
+
+			backend, err := newBackend()
+			if err != nil {
+				return fmt.Errorf("autorun install: %w", err)
+			}
+
+			cfg := InstallConfig{
+				BinaryPath: binPath,
+				Label:      "claude-openai-proxy",
+			}
+
+			err = backend.Install(cmd.Context(), cfg)
+			if err != nil {
+				return fmt.Errorf("autorun install: %w", err)
+			}
+
+			created, err := WriteDefaultConfigIfAbsent()
+			if err != nil {
+				return fmt.Errorf("autorun install: write config: %w", err)
+			}
+
+			claudeVer, err := getVersion(cmd.Context())
+			if err != nil {
+				_, err = fmt.Fprintf(stdout, "Warning: could not determine Claude CLI version: %v\n", err)
+				if err != nil {
+					return fmt.Errorf("autorun install: write output: %w", err)
+				}
+			} else {
+				_, err = fmt.Fprintf(stdout, "Claude CLI version: %s\n", claudeVer)
+				if err != nil {
+					return fmt.Errorf("autorun install: write output: %w", err)
+				}
+			}
+
+			_, err = fmt.Fprintf(stdout, "Autorun installed for %s\n", binPath)
+			if err != nil {
+				return fmt.Errorf("autorun install: write output: %w", err)
+			}
+
+			if created {
+				_, err = fmt.Fprintf(stdout, "Default config written to ~/%s\n", defaultConfigName)
+			} else {
+				_, err = fmt.Fprintf(stdout, "Existing config at ~/%s was not modified\n", defaultConfigName)
+			}
+
+			if err != nil {
+				return fmt.Errorf("autorun install: write output: %w", err)
+			}
+
+			return nil
+		},
+	}
+}
+
+func newUninstallCmd(stdout io.Writer, newBackend func() (Backend, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove the user-level autostart entry",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			backend, err := newBackend()
+			if err != nil {
+				return fmt.Errorf("autorun uninstall: %w", err)
+			}
+
+			err = backend.Uninstall(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("autorun uninstall: %w", err)
+			}
+
+			_, err = fmt.Fprintln(stdout, "Autorun uninstalled")
+			if err != nil {
+				return fmt.Errorf("autorun uninstall: write output: %w", err)
+			}
+
+			return nil
+		},
+	}
+}

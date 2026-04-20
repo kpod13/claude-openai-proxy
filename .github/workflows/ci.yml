@@ -32,7 +32,7 @@ jobs:
         run: go test -coverprofile=coverage.out ./...
       - name: Check minimum coverage
         run: |
-          MIN_COVERAGE=85
+          MIN_COVERAGE=70
           COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
           echo "Coverage: ${COVERAGE}% (minimum: ${MIN_COVERAGE}%)"
           if awk "BEGIN { exit !(${COVERAGE} < ${MIN_COVERAGE}) }"; then

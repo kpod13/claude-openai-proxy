@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpod13/claude-openai-proxy/internal/proxy"
 	"github.com/stretchr/testify/require"
-	"github.com/timur/claude-code-openai-server/internal/proxy"
 )
 
 var (

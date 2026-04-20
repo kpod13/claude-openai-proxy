@@ -74,6 +74,33 @@ func TestSanitizeModelID_Invalid(t *testing.T) {
 	}
 }
 
+// --- Version ---
+
+func TestVersion_Success(t *testing.T) {
+	orig := newCommand
+	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "echo", "1.2.3 (Claude Code)")
+	}
+
+	t.Cleanup(func() { newCommand = orig })
+
+	ver, err := Version(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "1.2.3 (Claude Code)", ver)
+}
+
+func TestVersion_CommandFails(t *testing.T) {
+	orig := newCommand
+	newCommand = failCommand
+
+	t.Cleanup(func() { newCommand = orig })
+
+	_, err := Version(context.Background())
+
+	require.Error(t, err)
+}
+
 // --- RunBlocking ---
 
 func echoCommand(ctx context.Context, _ string, _ ...string) *exec.Cmd {
