@@ -22,6 +22,19 @@ func TestMacOSBackend_PlistContent(t *testing.T) {
 	require.Contains(t, string(content), "<true/>")
 }
 
+func TestMacOSBackend_PlistContent_XMLEscaping(t *testing.T) {
+	cfg := InstallConfig{
+		BinaryPath: "/home/user/my apps & tools/claude-openai-proxy",
+		Label:      "com.claude-openai-proxy",
+	}
+
+	content, err := generatePlist(cfg)
+
+	require.NoError(t, err)
+	require.Contains(t, string(content), "my apps &amp; tools")
+	require.NotContains(t, string(content), "apps & tools")
+}
+
 func TestMacOSBackend_Uninstall_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 
