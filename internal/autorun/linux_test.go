@@ -31,6 +31,6 @@ func TestLinuxBackend_XDGDesktopContent(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Contains(t, string(content), "Type=Application")
-	require.Contains(t, string(content), "Exec=/usr/local/bin/claude-openai-proxy")
+	require.Contains(t, string(content), `Exec="/usr/local/bin/claude-openai-proxy"`)
 	require.Contains(t, string(content), "X-GNOME-Autostart-enabled=true")
 }

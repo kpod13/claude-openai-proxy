@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"text/template"
+	"strconv"
 )
 
 const (
@@ -50,6 +51,7 @@ func (b *macosBackend) plistPath() (string, error) {
 }
 
 // generatePlist renders the launchd plist XML for the given config.
+// html/template is used to safely escape XML special characters in paths.
 func generatePlist(cfg InstallConfig) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -59,6 +61,11 @@ func generatePlist(cfg InstallConfig) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// launchctlTarget returns the launchd bootstrap target for the current user.
+func launchctlTarget() string {
+	return "gui/" + strconv.Itoa(os.Getuid())
 }
 
 func (b *macosBackend) Install(ctx context.Context, cfg InstallConfig) error {
@@ -82,9 +89,9 @@ func (b *macosBackend) Install(ctx context.Context, cfg InstallConfig) error {
 		return fmt.Errorf("autorun: write plist: %w", err)
 	}
 
-	out, err := exec.CommandContext(ctx, "launchctl", "load", path).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "launchctl", "bootstrap", launchctlTarget(), path).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("autorun: launchctl load: %w\n%s", err, out)
+		return fmt.Errorf("autorun: launchctl bootstrap: %w\n%s", err, out)
 	}
 
 	return nil
@@ -105,9 +112,9 @@ func (b *macosBackend) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("autorun: stat plist: %w", err)
 	}
 
-	out, err := exec.CommandContext(ctx, "launchctl", "unload", path).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "launchctl", "bootout", launchctlTarget(), path).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("autorun: launchctl unload: %w\n%s", err, out)
+		return fmt.Errorf("autorun: launchctl bootout: %w\n%s", err, out)
 	}
 
 	err = os.Remove(path)

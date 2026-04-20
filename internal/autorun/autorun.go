@@ -1,6 +1,6 @@
 // Package autorun provides user-level autostart provisioning for the proxy binary.
-// It supports macOS (launchd), Linux (systemd user / XDG), Windows (registry),
-// and FreeBSD (crontab @reboot).
+// It supports macOS (launchd), Linux (systemd user / XDG), and Windows (registry).
+// Other operating systems return ErrUnsupportedOS.
 package autorun
 
 import "context"

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -33,7 +34,7 @@ WantedBy=default.target
 	xdgTmpl = template.Must(template.New("xdg").Parse(`[Desktop Entry]
 Type=Application
 Name={{ .Label }}
-Exec={{ .BinaryPath }}
+Exec="{{ .BinaryPath }}"
 X-GNOME-Autostart-enabled=true
 `))
 )
@@ -63,11 +64,16 @@ func (b *linuxBackend) xdgDesktopPath() (string, error) {
 }
 
 func (b *linuxBackend) systemdAvailable(ctx context.Context) bool {
+	_, err := exec.LookPath("systemctl")
+	if err != nil {
+		return false
+	}
+
 	out, err := exec.CommandContext(ctx, "systemctl", "--user", "is-system-running").CombinedOutput()
 	if err != nil {
-		_, statErr := exec.LookPath("systemctl")
-
-		return statErr == nil && len(out) > 0
+		// Treat non-zero exit as "not running" except for "degraded" which means
+		// systemd is running but some units have failed — still usable.
+		return strings.TrimSpace(string(out)) == "degraded"
 	}
 
 	return true
