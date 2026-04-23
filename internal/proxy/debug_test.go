@@ -165,3 +165,119 @@ func TestDebugRunStreaming_LogsError(t *testing.T) {
 	require.ErrorIs(t, err, errFakeDebugStream)
 	require.Contains(t, buf.String(), "CLI stream error")
 }
+
+// --- maskAuthorization ---
+
+func TestMaskAuthorization(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"Bearer token123", "Bearer ***"},
+		{"Basic abc==", "Basic ***"},
+		{"token123", "***"},
+		{"", "***"},
+		{"Bearer ", "***"},
+	}
+
+	for _, tc := range cases {
+		require.Equal(t, tc.want, maskAuthorization(tc.input), "input: %q", tc.input)
+	}
+}
+
+// --- sanitizeHeaders ---
+
+func TestSanitizeHeaders_MasksAuthorization(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{
+		"Authorization": {"Bearer secret-token"},
+		"Content-Type":  {"application/json"},
+	}
+
+	result := sanitizeHeaders(headers)
+
+	require.Equal(t, []string{"Bearer ***"}, result["Authorization"])
+	require.Equal(t, []string{"application/json"}, result["Content-Type"])
+}
+
+func TestSanitizeHeaders_PassthroughNonAuth(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{
+		"X-Custom": {"my-value"},
+		"Accept":   {"text/html"},
+	}
+
+	result := sanitizeHeaders(headers)
+
+	require.Equal(t, []string{"my-value"}, result["X-Custom"])
+	require.Equal(t, []string{"text/html"}, result["Accept"])
+}
+
+// --- DebugMiddleware header logging ---
+
+func TestDebugMiddleware_LogsRequestHeaders(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := DebugMiddleware(debugLogger(&buf))(inner)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", http.NoBody)
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+
+	require.Contains(t, out, "request")
+	require.Contains(t, out, "Content-Type")
+}
+
+func TestDebugMiddleware_MasksAuthorizationInRequestLog(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := DebugMiddleware(debugLogger(&buf))(inner)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", http.NoBody)
+	req.Header.Set("Authorization", "Bearer super-secret-token")
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+
+	require.Contains(t, out, "Bearer ***")
+	require.NotContains(t, out, "super-secret-token")
+}
+
+func TestDebugMiddleware_LogsResponseHeaders(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := DebugMiddleware(debugLogger(&buf))(inner)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", http.NoBody)
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+
+	require.Contains(t, out, "response")
+	require.Contains(t, out, "Content-Type")
+}

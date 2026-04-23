@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -25,19 +26,64 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// maskAuthorization replaces the credential part of an Authorization header value with ***.
+// The scheme (e.g. "Bearer", "Basic") is preserved. Returns "***" for empty or scheme-only values.
+func maskAuthorization(value string) string {
+	parts := strings.SplitN(value, " ", 2)
+	if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+		return "***"
+	}
+
+	return parts[0] + " ***"
+}
+
+// headersValue is a sanitized header map that implements slog.LogValuer.
+// In text format it renders as key=value pairs; in JSON as a nested object.
+type headersValue map[string][]string
+
+func (h headersValue) LogValue() slog.Value {
+	attrs := make([]slog.Attr, 0, len(h))
+
+	for k, vs := range h {
+		attrs = append(attrs, slog.String(k, strings.Join(vs, ", ")))
+	}
+
+	return slog.GroupValue(attrs...)
+}
+
+// sanitizeHeaders copies headers into a headersValue, masking the Authorization value.
+func sanitizeHeaders(headers http.Header) headersValue {
+	out := make(headersValue, len(headers))
+
+	for k, vs := range headers {
+		if http.CanonicalHeaderKey(k) == "Authorization" {
+			masked := make([]string, len(vs))
+			for i, v := range vs {
+				masked[i] = maskAuthorization(v)
+			}
+
+			out[k] = masked
+		} else {
+			out[k] = vs
+		}
+	}
+
+	return out
+}
+
 // DebugMiddleware returns an HTTP middleware that logs each request and response at DEBUG level.
 func DebugMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			log.Debug("request", "method", r.Method, "path", r.URL.Path)
+			log.Debug("request", slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.Any("headers", sanitizeHeaders(r.Header)))
 
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
 			next.ServeHTTP(rec, r)
 
-			log.Debug("response", "status", rec.status, "duration", time.Since(start))
+			log.Debug("response", slog.Int("status", rec.status), slog.Any("duration", time.Since(start)), slog.Any("headers", sanitizeHeaders(rec.Header())))
 		})
 	}
 }
