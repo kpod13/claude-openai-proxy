@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -146,6 +147,30 @@ func TestRunE_ServerStart(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRunE_ServerStart_Verbose(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: [sonnet]\n"), 0o600))
+
+	reg := proxy.NewRegistry(map[string]string{
+		"sonnet":            "claude-sonnet-4-6",
+		"claude-sonnet-4-6": "claude-sonnet-4-6",
+	})
+
+	deps := serverDeps{
+		discover: func(_ []string) *proxy.Registry { return reg },
+		serve:    func(_ *http.Server) error { return http.ErrServerClosed },
+	}
+
+	var buf bytes.Buffer
+
+	cmd := newRootCmdWith(&buf, deps)
+	cmd.SetArgs([]string{"--verbose", "--config", cfgPath})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+}
+
 func TestRunE_ServeError(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
@@ -165,6 +190,48 @@ func TestRunE_ServeError(t *testing.T) {
 
 	err := cmd.Execute()
 	require.Error(t, err)
+}
+
+func TestRunE_ServerStart_LogsModelNames(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: [sonnet]\n"), 0o600))
+
+	reg := proxy.NewRegistry(map[string]string{
+		"sonnet":            "claude-sonnet-4-6",
+		"claude-sonnet-4-6": "claude-sonnet-4-6",
+	})
+
+	deps := serverDeps{
+		discover: func(_ []string) *proxy.Registry { return reg },
+		serve:    func(_ *http.Server) error { return http.ErrServerClosed },
+	}
+
+	// Capture stderr where the logger writes.
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	var cmdBuf bytes.Buffer
+
+	cmd := newRootCmdWith(&cmdBuf, deps)
+	cmd.SetArgs([]string{"--config", cfgPath})
+
+	execErr := cmd.Execute()
+
+	os.Stderr = oldStderr
+
+	require.NoError(t, w.Close())
+
+	var logBuf bytes.Buffer
+
+	_, _ = io.Copy(&logBuf, r)
+
+	require.NoError(t, r.Close())
+	require.NoError(t, execErr)
+	require.Contains(t, logBuf.String(), "claude-sonnet-4-6")
 }
 
 func TestRunE_WithVerboseAndQuietFlags(t *testing.T) {

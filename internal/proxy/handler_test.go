@@ -429,3 +429,4 @@ func TestRateLimitMiddleware_RPMExceeded_Returns429WithHeaders(t *testing.T) {
 	require.Equal(t, "requests", errBody.Error.Type)
 	require.Equal(t, "rate_limit_exceeded", errBody.Error.Code)
 }
+

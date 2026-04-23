@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	headerContentType   = "Content-Type"
-	headerCacheControl  = "Cache-Control"
+	headerContentType     = "Content-Type"
+	headerCacheControl    = "Cache-Control"
 	headerXAccelBuffering = "X-Accel-Buffering"
 
 	mimeJSON = "application/json"

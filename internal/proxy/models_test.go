@@ -28,6 +28,35 @@ func makeRegistry(entries map[string]string) *Registry {
 	return reg
 }
 
+func TestNewRegistry_DeduplicatesModels(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(map[string]string{
+		"sonnet":            "claude-sonnet-4-6",
+		"claude-sonnet-4-6": "claude-sonnet-4-6",
+		"haiku":             "claude-haiku-4-5",
+		"claude-haiku-4-5":  "claude-haiku-4-5",
+	})
+
+	require.Equal(t, 2, reg.Len())
+
+	got, err := reg.Resolve("sonnet")
+	require.NoError(t, err)
+	require.Equal(t, "claude-sonnet-4-6", got)
+
+	got, err = reg.Resolve("claude-haiku-4-5")
+	require.NoError(t, err)
+	require.Equal(t, "claude-haiku-4-5", got)
+}
+
+func TestNewRegistry_Empty(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(map[string]string{})
+	require.Equal(t, 0, reg.Len())
+	require.Empty(t, reg.List())
+}
+
 func TestRegistryResolve_FullID(t *testing.T) {
 	reg := makeRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",

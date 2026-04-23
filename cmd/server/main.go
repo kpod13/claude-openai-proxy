@@ -84,9 +84,19 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 				return errNoModels
 			}
 
-			log.Info("Models discovered", "count", reg.Len())
+			modelIDs := make([]string, 0, reg.Len())
+			for _, m := range reg.List() {
+				modelIDs = append(modelIDs, m.ID)
+			}
+
+			log.Info("Models discovered", "count", reg.Len(), "models", modelIDs)
 
 			h := &proxy.Handler{Registry: reg}
+
+			if verbose {
+				h.RunBlocking = proxy.DebugRunBlocking(log, proxy.RunBlocking)
+				h.RunStreaming = proxy.DebugRunStreaming(log, proxy.RunStreaming)
+			}
 
 			limiter := ratelimit.New(
 				cfg.RateLimit.RequestsPerMinute,
@@ -106,9 +116,14 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 			mux.HandleFunc("/v1/models", h.Models)
 			mux.Handle("/v1/chat/completions", rlMiddleware(http.HandlerFunc(h.ChatCompletions)))
 
+			var handler http.Handler = mux
+			if verbose {
+				handler = proxy.DebugMiddleware(log)(mux)
+			}
+
 			srv := &http.Server{
 				Addr:         cfg.Listen,
-				Handler:      mux,
+				Handler:      handler,
 				ReadTimeout:  5 * time.Minute,
 				WriteTimeout: 10 * time.Minute,
 				IdleTimeout:  2 * time.Minute,
