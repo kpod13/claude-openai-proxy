@@ -103,49 +103,35 @@ func TestHandlerModels(t *testing.T) {
 
 // --- Handler.ChatCompletions error paths ---
 
-func TestHandlerChatCompletions_MalformedJSON(t *testing.T) {
+func TestHandlerChatCompletions_BadRequest(t *testing.T) {
+	t.Parallel()
+
 	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
 	h := &Handler{Registry: reg}
 
-	body := strings.NewReader("{not json}")
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
-	req.Header.Set("Content-Type", "application/json")
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"malformed JSON", "{not json}"},
+		{"unknown model", `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`},
+		{"bad role", `{"model":"sonnet","messages":[{"role":"tool","content":"hi"}]}`},
+	}
 
-	w := httptest.NewRecorder()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	h.ChatCompletions(w, req)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-}
+			w := httptest.NewRecorder()
 
-func TestHandlerChatCompletions_UnknownModel(t *testing.T) {
-	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
-	h := &Handler{Registry: reg}
+			h.ChatCompletions(w, req)
 
-	body := strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-
-	h.ChatCompletions(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandlerChatCompletions_BadRole(t *testing.T) {
-	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
-	h := &Handler{Registry: reg}
-
-	body := strings.NewReader(`{"model":"sonnet","messages":[{"role":"tool","content":"hi"}]}`)
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", body)
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-
-	h.ChatCompletions(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 // --- handleBlocking ---

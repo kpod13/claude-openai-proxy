@@ -8,69 +8,94 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseBlockingOutput_Valid(t *testing.T) {
-	raw := []byte(`{"type":"result","result":"Hello!","usage":{"input_tokens":10,"output_tokens":5}}`)
+func TestParseBlockingOutput(t *testing.T) {
+	t.Parallel()
 
-	got, err := parseBlockingOutput(raw)
-	require.NoError(t, err)
-
-	require.Equal(t, "Hello!", got.Text)
-	require.Equal(t, 10, got.InputTokens)
-	require.Equal(t, 5, got.OutputTokens)
-}
-
-func TestParseBlockingOutput_WithLeadingText(t *testing.T) {
-	// The CLI sometimes emits a status line before the JSON object.
-	raw := []byte("- Loading...\n{\"type\":\"result\",\"result\":\"Hi\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}")
-
-	got, err := parseBlockingOutput(raw)
-	require.NoError(t, err)
-
-	require.Equal(t, "Hi", got.Text)
-}
-
-func TestParseBlockingOutput_NoJSON(t *testing.T) {
-	raw := []byte("something went wrong")
-
-	_, err := parseBlockingOutput(raw)
-	require.Error(t, err)
-}
-
-func TestParseBlockingOutput_InvalidJSON(t *testing.T) {
-	raw := []byte("{not valid json}")
-
-	_, err := parseBlockingOutput(raw)
-	require.Error(t, err)
-}
-
-// --- sanitizeModelID ---
-
-func TestSanitizeModelID_Valid(t *testing.T) {
-	cases := []string{
-		"claude-sonnet-4-6",
-		"claude-haiku-4-5",
-		"claude-opus-4-6",
-		"sonnet",
+	cases := []struct {
+		name     string
+		input    []byte
+		wantText string
+		wantIn   int
+		wantOut  int
+		wantErr  bool
+	}{
+		{
+			name:     "valid",
+			input:    []byte(`{"type":"result","result":"Hello!","usage":{"input_tokens":10,"output_tokens":5}}`),
+			wantText: "Hello!",
+			wantIn:   10,
+			wantOut:  5,
+		},
+		{
+			name:     "with leading text",
+			input:    []byte("- Loading...\n{\"type\":\"result\",\"result\":\"Hi\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}"),
+			wantText: "Hi",
+		},
+		{
+			name:    "no JSON",
+			input:   []byte("something went wrong"),
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON",
+			input:   []byte("{not valid json}"),
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {
-		got, err := sanitizeModelID(tc)
-		require.NoError(t, err)
-		require.Equal(t, tc, got)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseBlockingOutput(tc.input)
+			if tc.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantText, got.Text)
+
+			if tc.wantIn > 0 {
+				require.Equal(t, tc.wantIn, got.InputTokens)
+				require.Equal(t, tc.wantOut, got.OutputTokens)
+			}
+		})
 	}
 }
 
-func TestSanitizeModelID_Invalid(t *testing.T) {
-	cases := []string{
-		"claude sonnet",
-		"claude/sonnet",
-		"../../etc/passwd",
-		"model;rm -rf",
+func TestSanitizeModelID(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"claude-sonnet-4-6", false},
+		{"claude-haiku-4-5", false},
+		{"claude-opus-4-6", false},
+		{"sonnet", false},
+		{"claude sonnet", true},
+		{"claude/sonnet", true},
+		{"../../etc/passwd", true},
+		{"model;rm -rf", true},
 	}
 
 	for _, tc := range cases {
-		_, err := sanitizeModelID(tc)
-		require.Error(t, err)
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := sanitizeModelID(tc.input)
+			if tc.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.input, got)
+		})
 	}
 }
 

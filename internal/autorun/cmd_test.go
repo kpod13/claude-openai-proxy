@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -166,4 +167,11 @@ func TestUninstallCmd_BackendError(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unload failed")
+}
+
+func TestNewCmd_ReturnsCobraCommand(t *testing.T) {
+	cmd := NewCmd(os.Stdout)
+
+	require.NotNil(t, cmd)
+	require.Equal(t, "autorun", cmd.Use)
 }

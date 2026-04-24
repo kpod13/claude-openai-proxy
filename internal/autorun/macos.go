@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html/template"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 )
@@ -89,7 +88,7 @@ func (b *macosBackend) Install(ctx context.Context, cfg InstallConfig) error {
 		return fmt.Errorf("autorun: write plist: %w", err)
 	}
 
-	out, err := exec.CommandContext(ctx, "launchctl", "bootstrap", launchctlTarget(), path).CombinedOutput()
+	out, err := execCommand(ctx, "launchctl", "bootstrap", launchctlTarget(), path).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("autorun: launchctl bootstrap: %w\n%s", err, out)
 	}
@@ -112,7 +111,7 @@ func (b *macosBackend) Uninstall(ctx context.Context) error {
 		return fmt.Errorf("autorun: stat plist: %w", err)
 	}
 
-	out, err := exec.CommandContext(ctx, "launchctl", "bootout", launchctlTarget(), path).CombinedOutput()
+	out, err := execCommand(ctx, "launchctl", "bootout", launchctlTarget(), path).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("autorun: launchctl bootout: %w\n%s", err, out)
 	}

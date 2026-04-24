@@ -8,6 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWriteDefaultConfigIfAbsent_StatError(t *testing.T) {
+	// Set HOME to a regular file so that stat on HOME/filename returns ENOTDIR
+	// (not ENOENT), hitting the non-ErrNotExist error branch.
+	t.Setenv("HOME", fileAsHome(t))
+
+	_, err := WriteDefaultConfigIfAbsent()
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stat config")
+}
+
 func TestWriteDefaultConfigIfAbsent_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 
