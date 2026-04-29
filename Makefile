@@ -1,10 +1,10 @@
 .PHONY: build run test lint ci
 
 build:
-	go build -o bin/server ./cmd/server
+	go build -o bin/claude-openai-proxy ./cmd/claude-openai-proxy
 
 run: build
-	./bin/server
+	./bin/claude-openai-proxy
 
 test:
 	go test ./...

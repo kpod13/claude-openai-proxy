@@ -76,7 +76,7 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${BINARY_NAME}" ./cmd/server
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${BINARY_NAME}" ./cmd/claude-openai-proxy
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:

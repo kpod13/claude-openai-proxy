@@ -24,7 +24,7 @@ Translates `/v1/chat/completions` and `/v1/models` requests into Claude subproce
 **From source:**
 
 ```bash
-go install github.com/timur/claude-code-openai-server/cmd/server@latest
+go install github.com/kpod13/claude-openai-proxy/cmd/claude-openai-proxy@latest
 ```
 
 **Pre-built binaries** are available on the [Releases](../../releases) page for Linux, macOS, and Windows (amd64/arm64).
@@ -129,7 +129,7 @@ The rate limiter is keyed on the `Authorization: Bearer <token>` header value. U
 ## Development
 
 ```bash
-make build   # build binary to bin/server
+make build   # build binary to bin/claude-openai-proxy
 make run     # build and run
 make test    # run tests
 make lint    # run golangci-lint

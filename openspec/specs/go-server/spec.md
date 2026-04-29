@@ -6,7 +6,7 @@ The repository SHALL contain a valid `go.mod` file at the root with a declared m
 - **THEN** the command exits with code 0 and reports no errors
 
 ### Requirement: Server entry point
-The project SHALL provide a `main` package under `cmd/server/main.go` that starts an HTTP server on a configurable address (default `127.0.0.1:8080`) and registers the following routes: `/healthz`, `GET /v1/models`, and `POST /v1/chat/completions`. The listen address and model aliases SHALL be read from the config file (see `server-config` capability) before the server binds.
+The project SHALL provide a `main` package under `cmd/claude-openai-proxy/main.go` that starts an HTTP server on a configurable address (default `127.0.0.1:8080`) and registers the following routes: `/healthz`, `GET /v1/models`, and `POST /v1/chat/completions`. The listen address and model aliases SHALL be read from the config file (see `server-config` capability) before the server binds.
 
 #### Scenario: Server starts and listens on loopback by default
 - **WHEN** the compiled binary is executed without arguments and no config file is present
@@ -32,7 +32,7 @@ The project SHALL include a `Makefile` at the root with `build`, `run`, `test`, 
 
 #### Scenario: Build target compiles the binary
 - **WHEN** `make build` is executed
-- **THEN** a binary is produced at `bin/server`
+- **THEN** a binary is produced at `bin/claude-openai-proxy`
 
 #### Scenario: Test target runs Go tests
 - **WHEN** `make test` is executed
