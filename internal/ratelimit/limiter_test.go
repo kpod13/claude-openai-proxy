@@ -8,65 +8,153 @@ import (
 )
 
 func TestLimiter_Enabled(t *testing.T) {
-	require.False(t, New(0, 0).Enabled())
-	require.True(t, New(60, 0).Enabled())
-	require.True(t, New(0, 1000).Enabled())
-	require.True(t, New(60, 1000).Enabled())
-}
+	t.Parallel()
 
-func TestLimiter_RPM_Enforced(t *testing.T) {
-	l := New(3, 0)
-
-	for i := range 3 {
-		info, ok := l.Allow("k", 10)
-		require.True(t, ok, "request %d should be allowed", i+1)
-		require.Equal(t, 3, info.LimitRequests)
-		require.Equal(t, 3-i-1, info.RemainingRequests)
+	cases := []struct {
+		name string
+		rpm  int
+		tpm  int
+		want bool
+	}{
+		{"both zero", 0, 0, false},
+		{"RPM only", 60, 0, true},
+		{"TPM only", 0, 1000, true},
+		{"both set", 60, 1000, true},
 	}
 
-	info, ok := l.Allow("k", 10)
-	require.False(t, ok)
-	require.Equal(t, "requests", info.ExceededBy)
-	require.Equal(t, 0, info.RemainingRequests)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tc.want, New(tc.rpm, tc.tpm).Enabled())
+		})
+	}
 }
 
-func TestLimiter_TPM_Enforced(t *testing.T) {
-	l := New(0, 100)
+func TestLimiter_Enforced(t *testing.T) {
+	t.Parallel()
 
-	info, ok := l.Allow("k", 80)
-	require.True(t, ok)
-	require.Equal(t, 20, info.RemainingTokens)
+	type call struct {
+		tokens int
+		wantOK bool
+		check  func(t *testing.T, info Info)
+	}
 
-	// 80+30 > 100 → denied
-	info, ok = l.Allow("k", 30)
-	require.False(t, ok)
-	require.Equal(t, "tokens", info.ExceededBy)
-	require.Equal(t, 0, info.RemainingTokens)
+	cases := []struct {
+		name     string
+		rpm, tpm int
+		key      string
+		calls    []call
+	}{
+		{
+			name: "RPM enforced",
+			rpm:  3,
+			key:  "k",
+			calls: []call{
+				{tokens: 10, wantOK: true, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, 3, info.LimitRequests)
+					require.Equal(t, 2, info.RemainingRequests)
+				}},
+				{tokens: 10, wantOK: true, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, 1, info.RemainingRequests)
+				}},
+				{tokens: 10, wantOK: true, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, 0, info.RemainingRequests)
+				}},
+				{tokens: 10, wantOK: false, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, "requests", info.ExceededBy)
+					require.Equal(t, 0, info.RemainingRequests)
+				}},
+			},
+		},
+		{
+			name: "TPM enforced",
+			tpm:  100,
+			key:  "k",
+			calls: []call{
+				{tokens: 80, wantOK: true, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, 20, info.RemainingTokens)
+				}},
+				// 80+30 > 100 → denied
+				{tokens: 30, wantOK: false, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, "tokens", info.ExceededBy)
+					require.Equal(t, 0, info.RemainingTokens)
+				}},
+			},
+		},
+		{
+			name: "unlimited dimension reports -1",
+			rpm:  0,
+			tpm:  100,
+			key:  "k",
+			calls: []call{
+				{tokens: 10, wantOK: true, check: func(t *testing.T, info Info) {
+					t.Helper()
+					require.Equal(t, -1, info.RemainingRequests, "unlimited dimension should be -1")
+					require.Equal(t, 90, info.RemainingTokens)
+				}},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			l := New(tc.rpm, tc.tpm)
+
+			for i, c := range tc.calls {
+				info, ok := l.Allow(tc.key, c.tokens)
+				require.Equal(t, c.wantOK, ok, "call %d", i+1)
+
+				if c.check != nil {
+					c.check(t, info)
+				}
+			}
+		})
+	}
 }
 
-func TestLimiter_PerKeyIsolation(t *testing.T) {
-	l := New(1, 0)
+func TestLimiter_Buckets(t *testing.T) {
+	t.Parallel()
 
-	_, ok := l.Allow("key-a", 0)
-	require.True(t, ok)
+	cases := []struct {
+		name string
+		// keys are consumed in order; the test asserts the second call to the
+		// last key is denied while intermediate keys remain allowed.
+		keys []string
+	}{
+		{"per-key isolation", []string{"key-a", "key-b", "key-a"}},
+		{"anonymous bucket", []string{"", ""}},
+	}
 
-	// key-a exhausted
-	_, ok = l.Allow("key-a", 0)
-	require.False(t, ok)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	// key-b unaffected
-	_, ok = l.Allow("key-b", 0)
-	require.True(t, ok)
-}
+			l := New(1, 0)
 
-func TestLimiter_AnonymousBucket(t *testing.T) {
-	l := New(1, 0)
+			// First time we see each key it must succeed; the second time it must fail.
+			seen := map[string]bool{}
 
-	_, ok := l.Allow("", 0)
-	require.True(t, ok)
+			for i, k := range tc.keys {
+				_, ok := l.Allow(k, 0)
 
-	_, ok = l.Allow("", 0)
-	require.False(t, ok)
+				if seen[k] {
+					require.False(t, ok, "call %d (key=%q) should be rejected on repeat", i+1, k)
+				} else {
+					require.True(t, ok, "call %d (key=%q) should be allowed first time", i+1, k)
+					seen[k] = true
+				}
+			}
+		})
+	}
 }
 
 func TestLimiter_WindowReset(t *testing.T) {
@@ -81,17 +169,9 @@ func TestLimiter_WindowReset(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestLimiter_UnlimitedDimension_ReturnsNegativeOne(t *testing.T) {
-	// RPM unlimited, TPM configured.
-	l := New(0, 100)
-
-	info, ok := l.Allow("k", 10)
-	require.True(t, ok)
-	require.Equal(t, -1, info.RemainingRequests, "unlimited dimension should be -1")
-	require.Equal(t, 90, info.RemainingTokens)
-}
-
 func TestLimiter_ResetDuration_WithinOneMinute(t *testing.T) {
+	t.Parallel()
+
 	l := New(10, 0)
 
 	info, ok := l.Allow("k", 0)

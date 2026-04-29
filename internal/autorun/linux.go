@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -64,12 +63,12 @@ func (b *linuxBackend) xdgDesktopPath() (string, error) {
 }
 
 func (b *linuxBackend) systemdAvailable(ctx context.Context) bool {
-	_, err := exec.LookPath("systemctl")
+	_, err := execLookPath("systemctl")
 	if err != nil {
 		return false
 	}
 
-	out, err := exec.CommandContext(ctx, "systemctl", "--user", "is-system-running").CombinedOutput()
+	out, err := execCommand(ctx, "systemctl", "--user", "is-system-running").CombinedOutput()
 	if err != nil {
 		// Treat non-zero exit as "not running" except for "degraded" which means
 		// systemd is running but some units have failed — still usable.
@@ -120,7 +119,7 @@ func (b *linuxBackend) installSystemd(ctx context.Context, cfg InstallConfig) er
 		return fmt.Errorf("autorun: write systemd unit: %w", err)
 	}
 
-	out, err := exec.CommandContext(ctx, "systemctl", "--user", "enable", "--now", linuxServiceName).CombinedOutput()
+	out, err := execCommand(ctx, "systemctl", "--user", "enable", "--now", linuxServiceName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("autorun: systemctl enable: %w\n%s", err, out)
 	}
@@ -189,7 +188,7 @@ func (b *linuxBackend) Uninstall(ctx context.Context) error {
 }
 
 func (b *linuxBackend) uninstallSystemd(ctx context.Context, unitPath string) error {
-	out, err := exec.CommandContext(ctx, "systemctl", "--user", "disable", "--now", linuxServiceName).CombinedOutput()
+	out, err := execCommand(ctx, "systemctl", "--user", "disable", "--now", linuxServiceName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("autorun: systemctl disable: %w\n%s", err, out)
 	}

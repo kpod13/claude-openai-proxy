@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kpod13/claude-openai-proxy/internal/proxy"
@@ -17,167 +17,226 @@ var (
 	errPortInUse = errors.New("port in use")
 )
 
-func TestVersionFlag(t *testing.T) {
-	var buf bytes.Buffer
+func TestRootCmd_Flags(t *testing.T) {
+	t.Parallel()
 
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"--version"})
+	cases := []struct {
+		name         string
+		args         []string
+		wantContains string
+	}{
+		{name: "version", args: []string{"--version"}},
+		{name: "help", args: []string{"--help"}, wantContains: "claude-openai-proxy"},
+	}
 
-	err := cmd.Execute()
-	require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			cmd := newRootCmd(&buf)
+			cmd.SetOut(&buf)
+			cmd.SetArgs(tc.args)
+
+			err := cmd.Execute()
+			require.NoError(t, err)
+
+			if tc.wantContains != "" {
+				require.Contains(t, buf.String(), tc.wantContains)
+			}
+		})
+	}
 }
 
-func TestHelpFlag(t *testing.T) {
-	var buf bytes.Buffer
+func TestCompletion(t *testing.T) {
+	t.Parallel()
 
-	cmd := newRootCmd(&buf)
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
+	cases := []struct {
+		shell        string
+		wantErr      bool
+		wantContains string
+	}{
+		{shell: "zsh", wantContains: "zsh"},
+		{shell: "bash"},
+		{shell: "fish"},
+		{shell: "powershell"},
+		{shell: "fish-and-chips", wantErr: true, wantContains: "unsupported shell"},
+	}
 
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.Contains(t, buf.String(), "claude-openai-proxy")
+	for _, tc := range cases {
+		t.Run(tc.shell, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			cmd := newRootCmd(&buf)
+			cmd.SetArgs([]string{"completion", tc.shell})
+
+			err := cmd.Execute()
+
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantContains)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if tc.wantContains != "" {
+				require.Contains(t, buf.String(), tc.wantContains)
+			} else {
+				require.Positive(t, buf.Len())
+			}
+		})
+	}
 }
 
-func TestCompletionZsh(t *testing.T) {
-	var buf bytes.Buffer
+// writeConfig writes a config.yaml in a temp dir and returns its path.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
 
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"completion", "zsh"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.Contains(t, buf.String(), "zsh")
-}
-
-func TestCompletionBash(t *testing.T) {
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"completion", "bash"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.True(t, buf.Len() > 0)
-}
-
-func TestCompletionFish(t *testing.T) {
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"completion", "fish"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.True(t, buf.Len() > 0)
-}
-
-func TestCompletionPowershell(t *testing.T) {
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"completion", "powershell"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-	require.True(t, buf.Len() > 0)
-}
-
-func TestCompletionUnknownShell(t *testing.T) {
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"completion", "fish-and-chips"})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "unsupported shell"))
-}
-
-func TestRunE_ConfigMissing(t *testing.T) {
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"--config", "/nonexistent/path/config.yaml"})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-}
-
-func TestRunE_NoModels(t *testing.T) {
-	// Write a config with empty aliases so Discover returns immediately without
-	// spawning any claude subprocesses.
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: []\n"), 0o600))
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	var buf bytes.Buffer
-
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"--config", cfgPath})
-
-	err := cmd.Execute()
-	require.ErrorIs(t, err, errNoModels)
+	return path
 }
 
-func TestRunE_ServerStart(t *testing.T) {
-	// Use injected deps: a registry with one model and a serve function that
-	// returns http.ErrServerClosed immediately (simulates a clean shutdown).
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: [sonnet]\n"), 0o600))
-
-	reg := proxy.NewRegistry(map[string]string{
+// stubRegistry returns a registry resolving "sonnet" → "claude-sonnet-4-6".
+func stubRegistry() *proxy.Registry {
+	return proxy.NewRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",
 		"claude-sonnet-4-6": "claude-sonnet-4-6",
 	})
+}
+
+func TestRunE(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		configYAML string // empty → use missing path instead
+		missingCfg bool
+		extraArgs  []string
+		deps       *serverDeps
+		wantErrIs  error
+		wantErr    bool
+	}{
+		{
+			name:       "config missing",
+			missingCfg: true,
+			wantErr:    true,
+		},
+		{
+			name:       "no models",
+			configYAML: "aliases: []\n",
+			wantErrIs:  errNoModels,
+		},
+		{
+			name:       "server starts",
+			configYAML: "aliases: [sonnet]\n",
+			deps: &serverDeps{
+				discover: func(_ []string) *proxy.Registry { return stubRegistry() },
+				serve:    func(_ *http.Server) error { return http.ErrServerClosed },
+			},
+		},
+		{
+			name:       "verbose flag",
+			configYAML: "aliases: [sonnet]\n",
+			extraArgs:  []string{"--verbose"},
+			deps: &serverDeps{
+				discover: func(_ []string) *proxy.Registry { return stubRegistry() },
+				serve:    func(_ *http.Server) error { return http.ErrServerClosed },
+			},
+		},
+		{
+			name:       "serve error",
+			configYAML: "aliases: [sonnet]\n",
+			deps: &serverDeps{
+				discover: func(_ []string) *proxy.Registry { return stubRegistry() },
+				serve:    func(_ *http.Server) error { return errPortInUse },
+			},
+			wantErr: true,
+		},
+		{
+			// --quiet takes precedence over --verbose; RunE still reaches errNoModels.
+			name:       "verbose and quiet flags",
+			configYAML: "aliases: []\n",
+			extraArgs:  []string{"--verbose", "--quiet", "--log-format", "json"},
+			wantErrIs:  errNoModels,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfgPath string
+			if tc.missingCfg {
+				cfgPath = "/nonexistent/path/config.yaml"
+			} else {
+				cfgPath = writeConfig(t, tc.configYAML)
+			}
+
+			var buf bytes.Buffer
+
+			var cmd = newRootCmd(&buf)
+			if tc.deps != nil {
+				cmd = newRootCmdWith(&buf, *tc.deps)
+			}
+
+			args := append([]string{}, tc.extraArgs...)
+			args = append(args, "--config", cfgPath)
+			cmd.SetArgs(args)
+
+			err := cmd.Execute()
+
+			switch {
+			case tc.wantErrIs != nil:
+				require.ErrorIs(t, err, tc.wantErrIs)
+			case tc.wantErr:
+				require.Error(t, err)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestRunE_LogsModelNames is kept separate because it captures os.Stderr,
+// which is process-global and cannot be exercised under t.Parallel().
+func TestRunE_LogsModelNames(t *testing.T) {
+	cfgPath := writeConfig(t, "aliases: [sonnet]\n")
 
 	deps := serverDeps{
-		discover: func(_ []string) *proxy.Registry { return reg },
+		discover: func(_ []string) *proxy.Registry { return stubRegistry() },
 		serve:    func(_ *http.Server) error { return http.ErrServerClosed },
 	}
 
-	var buf bytes.Buffer
-
-	cmd := newRootCmdWith(&buf, deps)
-	cmd.SetArgs([]string{"--config", cfgPath})
-
-	err := cmd.Execute()
+	r, w, err := os.Pipe()
 	require.NoError(t, err)
-}
 
-func TestRunE_ServeError(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: [sonnet]\n"), 0o600))
+	oldStderr := os.Stderr
+	os.Stderr = w
 
-	reg := proxy.NewRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	var cmdBuf bytes.Buffer
 
-	deps := serverDeps{
-		discover: func(_ []string) *proxy.Registry { return reg },
-		serve:    func(_ *http.Server) error { return errPortInUse },
-	}
-
-	var buf bytes.Buffer
-
-	cmd := newRootCmdWith(&buf, deps)
+	cmd := newRootCmdWith(&cmdBuf, deps)
 	cmd.SetArgs([]string{"--config", cfgPath})
 
-	err := cmd.Execute()
-	require.Error(t, err)
-}
+	execErr := cmd.Execute()
 
-func TestRunE_WithVerboseAndQuietFlags(t *testing.T) {
-	// --quiet takes precedence over --verbose; RunE should still reach errNoModels.
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("aliases: []\n"), 0o600))
+	os.Stderr = oldStderr
 
-	var buf bytes.Buffer
+	require.NoError(t, w.Close())
 
-	cmd := newRootCmd(&buf)
-	cmd.SetArgs([]string{"--verbose", "--quiet", "--log-format", "json", "--config", cfgPath})
+	var logBuf bytes.Buffer
 
-	err := cmd.Execute()
-	require.ErrorIs(t, err, errNoModels)
+	_, _ = io.Copy(&logBuf, r)
+
+	require.NoError(t, r.Close())
+	require.NoError(t, execErr)
+	require.Contains(t, logBuf.String(), "claude-sonnet-4-6")
 }

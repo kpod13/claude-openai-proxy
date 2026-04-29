@@ -28,51 +28,125 @@ func makeRegistry(entries map[string]string) *Registry {
 	return reg
 }
 
-func TestRegistryResolve_FullID(t *testing.T) {
+func TestNewRegistry(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		input   map[string]string
+		wantLen int
+		check   func(t *testing.T, reg *Registry)
+	}{
+		{
+			name: "deduplicates models",
+			input: map[string]string{
+				"sonnet":            "claude-sonnet-4-6",
+				"claude-sonnet-4-6": "claude-sonnet-4-6",
+				"haiku":             "claude-haiku-4-5",
+				"claude-haiku-4-5":  "claude-haiku-4-5",
+			},
+			wantLen: 2,
+			check: func(t *testing.T, reg *Registry) {
+				t.Helper()
+
+				got, err := reg.Resolve("sonnet")
+				require.NoError(t, err)
+				require.Equal(t, "claude-sonnet-4-6", got)
+
+				got, err = reg.Resolve("claude-haiku-4-5")
+				require.NoError(t, err)
+				require.Equal(t, "claude-haiku-4-5", got)
+			},
+		},
+		{
+			name:    "empty",
+			input:   map[string]string{},
+			wantLen: 0,
+			check: func(t *testing.T, reg *Registry) {
+				t.Helper()
+				require.Empty(t, reg.List())
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := NewRegistry(tc.input)
+			require.Equal(t, tc.wantLen, reg.Len())
+			tc.check(t, reg)
+		})
+	}
+}
+
+func TestRegistryResolve(t *testing.T) {
+	t.Parallel()
+
 	reg := makeRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",
 		"claude-sonnet-4-6": "claude-sonnet-4-6",
 	})
 
-	got, err := reg.Resolve("claude-sonnet-4-6")
-	require.NoError(t, err)
+	cases := []struct {
+		name    string
+		input   string
+		wantID  string
+		wantErr bool
+	}{
+		{"full ID", "claude-sonnet-4-6", "claude-sonnet-4-6", false},
+		{"alias", "sonnet", "claude-sonnet-4-6", false},
+		{"unknown", "gpt-4", "", true},
+	}
 
-	require.Equal(t, "claude-sonnet-4-6", got)
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestRegistryResolve_Alias(t *testing.T) {
-	reg := makeRegistry(map[string]string{
-		"sonnet":            "claude-sonnet-4-6",
-		"claude-sonnet-4-6": "claude-sonnet-4-6",
-	})
+			got, err := reg.Resolve(tc.input)
+			if tc.wantErr {
+				require.Error(t, err)
 
-	got, err := reg.Resolve("sonnet")
-	require.NoError(t, err)
+				return
+			}
 
-	require.Equal(t, "claude-sonnet-4-6", got)
-}
-
-func TestRegistryResolve_Unknown(t *testing.T) {
-	reg := makeRegistry(map[string]string{
-		"sonnet": "claude-sonnet-4-6",
-	})
-
-	_, err := reg.Resolve("gpt-4")
-	require.Error(t, err)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantID, got)
+		})
+	}
 }
 
 func TestRegistryLen(t *testing.T) {
-	reg := makeRegistry(map[string]string{
-		"sonnet":            "claude-sonnet-4-6",
-		"claude-sonnet-4-6": "claude-sonnet-4-6",
-	})
+	t.Parallel()
 
-	require.Equal(t, 1, reg.Len())
-}
+	cases := []struct {
+		name    string
+		entries map[string]string
+		want    int
+	}{
+		{
+			name: "one unique model",
+			entries: map[string]string{
+				"sonnet":            "claude-sonnet-4-6",
+				"claude-sonnet-4-6": "claude-sonnet-4-6",
+			},
+			want: 1,
+		},
+		{
+			name:    "empty",
+			entries: map[string]string{},
+			want:    0,
+		},
+	}
 
-func TestRegistryLen_Empty(t *testing.T) {
-	reg := makeRegistry(map[string]string{})
-	require.Equal(t, 0, reg.Len())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := makeRegistry(tc.entries)
+			require.Equal(t, tc.want, reg.Len())
+		})
+	}
 }
 
 func TestRegistryList(t *testing.T) {
@@ -98,94 +172,117 @@ func probeEchoCommand(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "echo", `{"modelUsage":{"claude-sonnet-4-6":{}}}`)
 }
 
-func TestProbeAlias_Success(t *testing.T) {
-	orig := newCommand
-	newCommand = probeEchoCommand
-
-	t.Cleanup(func() { newCommand = orig })
-
-	got, err := probeAlias("sonnet")
-	require.NoError(t, err)
-	require.Equal(t, "claude-sonnet-4-6", got)
-}
-
-func TestProbeAlias_CommandFails(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "false")
+func TestProbeAlias(t *testing.T) {
+	cases := []struct {
+		name    string
+		cmd     func(context.Context, string, ...string) *exec.Cmd
+		wantID  string
+		wantErr bool
+	}{
+		{
+			name:   "success",
+			cmd:    probeEchoCommand,
+			wantID: "claude-sonnet-4-6",
+		},
+		{
+			name: "command fails",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "false")
+			},
+			wantErr: true,
+		},
+		{
+			name: "no JSON",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "echo", "no json here")
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid JSON",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "echo", `{not valid json}`)
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty model usage",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "echo", `{"modelUsage":{}}`)
+			},
+			wantErr: true,
+		},
 	}
 
-	t.Cleanup(func() { newCommand = orig })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := newCommand
+			newCommand = tc.cmd
 
-	_, err := probeAlias("sonnet")
-	require.Error(t, err)
-}
+			t.Cleanup(func() { newCommand = orig })
 
-func TestProbeAlias_NoJSON(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", "no json here")
+			got, err := probeAlias("sonnet")
+			if tc.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantID, got)
+		})
 	}
-
-	t.Cleanup(func() { newCommand = orig })
-
-	_, err := probeAlias("sonnet")
-	require.Error(t, err)
-}
-
-func TestProbeAlias_InvalidJSON(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", `{not valid json}`)
-	}
-
-	t.Cleanup(func() { newCommand = orig })
-
-	_, err := probeAlias("sonnet")
-	require.Error(t, err)
-}
-
-func TestProbeAlias_EmptyModelUsage(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", `{"modelUsage":{}}`)
-	}
-
-	t.Cleanup(func() { newCommand = orig })
-
-	_, err := probeAlias("sonnet")
-	require.Error(t, err)
 }
 
 // --- Discover ---
 
-func TestDiscover_Success(t *testing.T) {
-	orig := newCommand
-	newCommand = probeEchoCommand
-
-	t.Cleanup(func() { newCommand = orig })
-
-	reg := Discover([]string{"sonnet"})
-	require.Equal(t, 1, reg.Len())
-
-	got, err := reg.Resolve("claude-sonnet-4-6")
-	require.NoError(t, err)
-	require.Equal(t, "claude-sonnet-4-6", got)
-}
-
-func TestDiscover_FailedAliasSkipped(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "false")
+func TestDiscover(t *testing.T) {
+	cases := []struct {
+		name    string
+		cmd     func(context.Context, string, ...string) *exec.Cmd
+		aliases []string
+		wantLen int
+		wantID  string
+	}{
+		{
+			name:    "success",
+			cmd:     probeEchoCommand,
+			aliases: []string{"sonnet"},
+			wantLen: 1,
+			wantID:  "claude-sonnet-4-6",
+		},
+		{
+			name: "failed alias skipped",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "false")
+			},
+			aliases: []string{"sonnet", "haiku"},
+			wantLen: 0,
+		},
+		{
+			name:    "empty aliases",
+			aliases: []string{},
+			wantLen: 0,
+		},
 	}
 
-	t.Cleanup(func() { newCommand = orig })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cmd != nil {
+				orig := newCommand
+				newCommand = tc.cmd
 
-	reg := Discover([]string{"sonnet", "haiku"})
-	require.Equal(t, 0, reg.Len())
-}
+				t.Cleanup(func() { newCommand = orig })
+			}
 
-func TestDiscover_Empty(t *testing.T) {
-	reg := Discover([]string{})
-	require.Equal(t, 0, reg.Len())
+			reg := Discover(tc.aliases)
+			require.Equal(t, tc.wantLen, reg.Len())
+
+			if tc.wantID != "" {
+				got, err := reg.Resolve(tc.wantID)
+				require.NoError(t, err)
+				require.Equal(t, tc.wantID, got)
+			}
+		})
+	}
 }

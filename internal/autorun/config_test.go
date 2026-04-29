@@ -8,39 +8,90 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteDefaultConfigIfAbsent_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
+func TestWriteDefaultConfigIfAbsent(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T) string
+		wantErr     bool
+		errContains string
+		wantCreated bool
+		check       func(t *testing.T, home string)
+	}{
+		{
+			name: "stat error",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				home := fileAsHome(t)
+				t.Setenv("HOME", home)
 
-	t.Setenv("HOME", dir)
+				return home
+			},
+			wantErr:     true,
+			errContains: "stat config",
+		},
+		{
+			name: "creates file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				t.Setenv("HOME", dir)
 
-	created, err := WriteDefaultConfigIfAbsent()
+				return dir
+			},
+			wantCreated: true,
+			check: func(t *testing.T, home string) {
+				t.Helper()
 
-	require.NoError(t, err)
-	require.True(t, created)
+				content, err := os.ReadFile(filepath.Join(home, defaultConfigName))
+				require.NoError(t, err)
+				require.Contains(t, string(content), "listen:")
+				require.Contains(t, string(content), "127.0.0.1:8080")
+			},
+		},
+		{
+			name: "skips existing file",
+			setup: func(t *testing.T) string {
+				t.Helper()
 
-	content, err := os.ReadFile(filepath.Join(dir, defaultConfigName))
-	require.NoError(t, err)
-	require.Contains(t, string(content), "listen:")
-	require.Contains(t, string(content), "127.0.0.1:8080")
-}
+				dir := t.TempDir()
+				t.Setenv("HOME", dir)
 
-func TestWriteDefaultConfigIfAbsent_SkipsExistingFile(t *testing.T) {
-	dir := t.TempDir()
+				original := []byte("listen: \"0.0.0.0:9090\"\n")
+				err := os.WriteFile(filepath.Join(dir, defaultConfigName), original, 0o600)
+				require.NoError(t, err)
 
-	t.Setenv("HOME", dir)
+				return dir
+			},
+			wantCreated: false,
+			check: func(t *testing.T, home string) {
+				t.Helper()
 
-	original := []byte("listen: \"0.0.0.0:9090\"\n")
-	path := filepath.Join(dir, defaultConfigName)
+				content, err := os.ReadFile(filepath.Join(home, defaultConfigName))
+				require.NoError(t, err)
+				require.Equal(t, []byte("listen: \"0.0.0.0:9090\"\n"), content)
+			},
+		},
+	}
 
-	err := os.WriteFile(path, original, 0o600)
-	require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tc.setup(t)
 
-	created, err := WriteDefaultConfigIfAbsent()
+			created, err := WriteDefaultConfigIfAbsent()
 
-	require.NoError(t, err)
-	require.False(t, created)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, original, content)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.wantCreated, created)
+
+			if tc.check != nil {
+				tc.check(t, home)
+			}
+		})
+	}
 }

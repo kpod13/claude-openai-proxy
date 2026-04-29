@@ -19,99 +19,138 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-func TestLoad_NoFile_UsesDefaults(t *testing.T) {
-	cfg, err := Load("")
-	require.NoError(t, err)
+func TestLoad(t *testing.T) {
+	t.Parallel()
 
-	require.Equal(t, "127.0.0.1:8080", cfg.Listen)
-	require.Equal(t, []string{"opus", "sonnet", "haiku"}, cfg.Aliases)
+	t.Run("no file uses defaults", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := Load("")
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1:8080", cfg.Listen)
+		require.Equal(t, []string{"opus", "sonnet", "haiku"}, cfg.Aliases)
+		require.Equal(t, 0, cfg.RateLimit.RequestsPerMinute)
+		require.Equal(t, 0, cfg.RateLimit.TokensPerMinute)
+	})
+
+	t.Run("missing explicit path returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := Load("/nonexistent/path/config.yaml")
+		require.Error(t, err)
+	})
+
+	t.Run("explicit file", func(t *testing.T) {
+		t.Parallel()
+
+		cases := []struct {
+			name    string
+			content string
+			wantErr bool
+			check   func(t *testing.T, cfg *Config)
+		}{
+			{
+				name:    "valid YAML overrides defaults",
+				content: "listen: \"0.0.0.0:9090\"\naliases:\n  - sonnet\n",
+				check: func(t *testing.T, cfg *Config) {
+					t.Helper()
+					require.Equal(t, "0.0.0.0:9090", cfg.Listen)
+					require.Equal(t, []string{"sonnet"}, cfg.Aliases)
+				},
+			},
+			{
+				name:    "partial YAML merges with defaults",
+				content: `listen: "0.0.0.0:9090"`,
+				check: func(t *testing.T, cfg *Config) {
+					t.Helper()
+					require.Equal(t, "0.0.0.0:9090", cfg.Listen)
+					require.Equal(t, []string{"opus", "sonnet", "haiku"}, cfg.Aliases)
+				},
+			},
+			{
+				name:    "invalid YAML returns error",
+				content: "listen: [invalid yaml",
+				wantErr: true,
+			},
+			{
+				name:    "rate limit parsed",
+				content: "rate_limit:\n  requests_per_minute: 60\n  tokens_per_minute: 10000\n",
+				check: func(t *testing.T, cfg *Config) {
+					t.Helper()
+					require.Equal(t, 60, cfg.RateLimit.RequestsPerMinute)
+					require.Equal(t, 10000, cfg.RateLimit.TokensPerMinute)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				dir := t.TempDir()
+				path := writeFile(t, dir, "config.yaml", tc.content)
+
+				cfg, err := Load(path)
+				if tc.wantErr {
+					require.Error(t, err)
+
+					return
+				}
+
+				require.NoError(t, err)
+
+				if tc.check != nil {
+					tc.check(t, cfg)
+				}
+			})
+		}
+	})
 }
 
-func TestLoad_ValidYAML_OverridesDefaults(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "config.yaml", `
-listen: "0.0.0.0:9090"
-aliases:
-  - sonnet
-`)
+func TestLoad_SearchPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		wantErr bool
+		check   func(t *testing.T, cfg *Config)
+	}{
+		{
+			name:    "valid file",
+			content: `listen: "0.0.0.0:7070"`,
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, "0.0.0.0:7070", cfg.Listen)
+			},
+		},
+		{
+			name:    "invalid YAML returns error",
+			content: "listen: [bad",
+			wantErr: true,
+		},
+	}
 
-	cfg, err := Load(path)
-	require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeFile(t, dir, "search.yaml", tc.content)
 
-	require.Equal(t, "0.0.0.0:9090", cfg.Listen)
-	require.Equal(t, []string{"sonnet"}, cfg.Aliases)
-}
+			orig := searchPathsFn
+			searchPathsFn = func() []string { return []string{path} }
 
-func TestLoad_PartialYAML_MergesWithDefaults(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "config.yaml", `listen: "0.0.0.0:9090"`)
+			t.Cleanup(func() { searchPathsFn = orig })
 
-	cfg, err := Load(path)
-	require.NoError(t, err)
+			cfg, err := Load("")
+			if tc.wantErr {
+				require.Error(t, err)
 
-	require.Equal(t, "0.0.0.0:9090", cfg.Listen)
-	require.Equal(t, []string{"opus", "sonnet", "haiku"}, cfg.Aliases)
-}
+				return
+			}
 
-func TestLoad_ExplicitPathMissing_ReturnsError(t *testing.T) {
-	_, err := Load("/nonexistent/path/config.yaml")
-	require.Error(t, err)
-}
+			require.NoError(t, err)
 
-func TestLoad_InvalidYAML_ReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "bad.yaml", "listen: [invalid yaml")
-
-	_, err := Load(path)
-	require.Error(t, err)
-}
-
-func TestLoad_SearchPath_ValidFile_ReturnsCfg(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "search.yaml", `listen: "0.0.0.0:7070"`)
-
-	orig := searchPathsFn
-	searchPathsFn = func() []string { return []string{path} }
-
-	t.Cleanup(func() { searchPathsFn = orig })
-
-	cfg, err := Load("")
-	require.NoError(t, err)
-	require.Equal(t, "0.0.0.0:7070", cfg.Listen)
-}
-
-func TestLoad_SearchPath_InvalidYAML_ReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "broken.yaml", "listen: [bad")
-
-	orig := searchPathsFn
-	searchPathsFn = func() []string { return []string{path} }
-
-	t.Cleanup(func() { searchPathsFn = orig })
-
-	_, err := Load("")
-	require.Error(t, err)
-}
-
-func TestLoad_RateLimit_Parsed(t *testing.T) {
-	dir := t.TempDir()
-	path := writeFile(t, dir, "config.yaml", `
-rate_limit:
-  requests_per_minute: 60
-  tokens_per_minute: 10000
-`)
-
-	cfg, err := Load(path)
-	require.NoError(t, err)
-
-	require.Equal(t, 60, cfg.RateLimit.RequestsPerMinute)
-	require.Equal(t, 10000, cfg.RateLimit.TokensPerMinute)
-}
-
-func TestLoad_RateLimit_AbsentUsesDefaults(t *testing.T) {
-	cfg, err := Load("")
-	require.NoError(t, err)
-
-	require.Equal(t, 0, cfg.RateLimit.RequestsPerMinute)
-	require.Equal(t, 0, cfg.RateLimit.TokensPerMinute)
+			if tc.check != nil {
+				tc.check(t, cfg)
+			}
+		})
+	}
 }

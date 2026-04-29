@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/kpod13/claude-openai-proxy/internal/logger"
@@ -55,105 +54,126 @@ func captureStderr(t *testing.T) func() string {
 	}
 }
 
-// TestInfoSuppressesDebug verifies that at INFO level, Debug messages are dropped.
-func TestInfoSuppressesDebug(t *testing.T) {
+func TestLoggerLevels(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
+	cases := []struct {
+		name    string
+		verbose bool
+		quiet   bool
+		log     func(l *slog.Logger)
+		wantMsg string
+	}{
+		{
+			name:    "INFO suppresses debug",
+			verbose: false,
+			quiet:   false,
+			log:     func(l *slog.Logger) { l.Debug("should not appear") },
+		},
+		{
+			name:    "verbose emits debug",
+			verbose: true,
+			quiet:   false,
+			log:     func(l *slog.Logger) { l.Debug("debug message") },
+			wantMsg: "debug message",
+		},
+		{
+			name:    "quiet suppresses all",
+			verbose: false,
+			quiet:   true,
+			log: func(l *slog.Logger) {
+				l.Info("info message")
+				l.Error("error message")
+			},
+		},
+		{
+			name:    "quiet overrides verbose",
+			verbose: true,
+			quiet:   true,
+			log: func(l *slog.Logger) {
+				l.Debug("debug message")
+				l.Info("info message")
+			},
+		},
+	}
 
-	log := newLoggerWithBuf(&buf, false, false)
-	log.Debug("should not appear")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if buf.Len() != 0 {
-		t.Errorf("expected no output at INFO level, got: %q", buf.String())
+			var buf bytes.Buffer
+
+			l := newLoggerWithBuf(&buf, tc.verbose, tc.quiet)
+			tc.log(l)
+
+			if tc.wantMsg != "" {
+				require.Contains(t, buf.String(), tc.wantMsg)
+			} else {
+				require.Empty(t, buf.String())
+			}
+		})
 	}
 }
 
-// TestVerboseEmitsDebug verifies that at DEBUG level, Debug messages are emitted.
-func TestVerboseEmitsDebug(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-
-	log := newLoggerWithBuf(&buf, true, false)
-	log.Debug("debug message")
-
-	if !strings.Contains(buf.String(), "debug message") {
-		t.Errorf("expected debug output, got: %q", buf.String())
+func TestNew(t *testing.T) {
+	cases := []struct {
+		name    string
+		verbose bool
+		quiet   bool
+		format  string
+		log     func(l *slog.Logger)
+		wantMsg string
+	}{
+		{
+			name:    "plain writes to stderr",
+			verbose: false,
+			quiet:   false,
+			format:  "plain",
+			log:     func(l *slog.Logger) { l.Info("hello from plain") },
+			wantMsg: "hello from plain",
+		},
+		{
+			name:    "JSON writes to stderr",
+			verbose: false,
+			quiet:   false,
+			format:  "json",
+			log:     func(l *slog.Logger) { l.Info("hello from json") },
+			wantMsg: `"msg"`,
+		},
+		{
+			name:   "quiet produces no output",
+			verbose: false,
+			quiet:  true,
+			format: "plain",
+			log: func(l *slog.Logger) {
+				l.Info("should be silent")
+				l.Error("also silent")
+			},
+		},
+		{
+			name:    "verbose emits debug",
+			verbose: true,
+			quiet:   false,
+			format:  "plain",
+			log:     func(l *slog.Logger) { l.Debug("verbose debug message") },
+			wantMsg: "verbose debug message",
+		},
 	}
-}
 
-// TestQuietSuppressesAll verifies that quiet mode silences Info and Error.
-func TestQuietSuppressesAll(t *testing.T) {
-	t.Parallel()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			read := captureStderr(t)
 
-	var buf bytes.Buffer
+			l := logger.New(tc.verbose, tc.quiet, tc.format)
+			tc.log(l)
 
-	log := newLoggerWithBuf(&buf, false, true)
-	log.Info("info message")
-	log.Error("error message")
+			out := read()
 
-	if buf.Len() != 0 {
-		t.Errorf("expected no output in quiet mode, got: %q", buf.String())
+			if tc.wantMsg != "" {
+				require.Contains(t, out, tc.wantMsg)
+			} else {
+				require.Empty(t, out)
+			}
+		})
 	}
-}
-
-// TestQuietOverridesVerbose verifies quiet wins when both quiet and verbose are set.
-func TestQuietOverridesVerbose(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-
-	log := newLoggerWithBuf(&buf, true, true)
-	log.Debug("debug message")
-	log.Info("info message")
-
-	if buf.Len() != 0 {
-		t.Errorf("expected no output when quiet overrides verbose, got: %q", buf.String())
-	}
-}
-
-// TestNew_PlainWritesToStderr verifies logger.New returns a working logger in plain mode.
-func TestNew_PlainWritesToStderr(t *testing.T) {
-	read := captureStderr(t)
-
-	log := logger.New(false, false, "plain")
-	log.Info("hello from plain")
-
-	out := read()
-	require.Contains(t, out, "hello from plain")
-}
-
-// TestNew_JSONWritesToStderr verifies logger.New returns a working logger in json mode.
-func TestNew_JSONWritesToStderr(t *testing.T) {
-	read := captureStderr(t)
-
-	log := logger.New(false, false, "json")
-	log.Info("hello from json")
-
-	out := read()
-	require.Contains(t, out, `"msg"`)
-}
-
-// TestNew_QuietProducesNoOutput verifies logger.New with quiet=true discards all output.
-func TestNew_QuietProducesNoOutput(t *testing.T) {
-	read := captureStderr(t)
-
-	log := logger.New(false, true, "plain")
-	log.Info("should be silent")
-	log.Error("also silent")
-
-	out := read()
-	require.Empty(t, out)
-}
-
-// TestNew_VerboseEmitsDebug verifies logger.New with verbose=true emits debug messages.
-func TestNew_VerboseEmitsDebug(t *testing.T) {
-	read := captureStderr(t)
-
-	log := logger.New(true, false, "plain")
-	log.Debug("verbose debug message")
-
-	out := read()
-	require.Contains(t, out, "verbose debug message")
 }

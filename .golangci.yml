@@ -92,6 +92,7 @@ linters:
         - G204  # subprocess launched with variable — intentional (claude CLI invocation with sanitized model ID)
         - G304  # file path from variable — intentional (user-supplied --config path, cleaned with filepath.Clean)
         - G702  # taint analysis: model is validated by sanitizeModelID (regex allowlist) before reaching exec
+        - G703  # taint analysis: paths in tests are derived from t.TempDir(); production paths come from validated --config
 
 issues:
   max-issues-per-linter: 0
