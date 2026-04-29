@@ -24,30 +24,54 @@ func fileAsHome(t *testing.T) string {
 }
 
 func TestMacOSBackend_PlistContent(t *testing.T) {
-	cfg := InstallConfig{
-		BinaryPath: "/usr/local/bin/claude-openai-proxy",
-		Label:      "com.claude-openai-proxy",
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		cfg             InstallConfig
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name: "basic",
+			cfg: InstallConfig{
+				BinaryPath: "/usr/local/bin/claude-openai-proxy",
+				Label:      "com.claude-openai-proxy",
+			},
+			wantContains: []string{
+				"<string>com.claude-openai-proxy</string>",
+				"<string>/usr/local/bin/claude-openai-proxy</string>",
+				"<true/>",
+			},
+		},
+		{
+			name: "xml escaping",
+			cfg: InstallConfig{
+				BinaryPath: "/home/user/my apps & tools/claude-openai-proxy",
+				Label:      "com.claude-openai-proxy",
+			},
+			wantContains:    []string{"my apps &amp; tools"},
+			wantNotContains: []string{"apps & tools"},
+		},
 	}
 
-	content, err := generatePlist(cfg)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.NoError(t, err)
-	require.Contains(t, string(content), "<string>com.claude-openai-proxy</string>")
-	require.Contains(t, string(content), "<string>/usr/local/bin/claude-openai-proxy</string>")
-	require.Contains(t, string(content), "<true/>")
-}
+			content, err := generatePlist(tc.cfg)
 
-func TestMacOSBackend_PlistContent_XMLEscaping(t *testing.T) {
-	cfg := InstallConfig{
-		BinaryPath: "/home/user/my apps & tools/claude-openai-proxy",
-		Label:      "com.claude-openai-proxy",
+			require.NoError(t, err)
+
+			for _, want := range tc.wantContains {
+				require.Contains(t, string(content), want)
+			}
+
+			for _, notWant := range tc.wantNotContains {
+				require.NotContains(t, string(content), notWant)
+			}
+		})
 	}
-
-	content, err := generatePlist(cfg)
-
-	require.NoError(t, err)
-	require.Contains(t, string(content), "my apps &amp; tools")
-	require.NotContains(t, string(content), "apps & tools")
 }
 
 func TestLaunchctlTarget(t *testing.T) {
@@ -58,118 +82,161 @@ func TestLaunchctlTarget(t *testing.T) {
 
 // --- Install ---
 
-func TestMacOSBackend_Install_Success(t *testing.T) {
-	dir := t.TempDir()
+func TestMacOSBackend_Install(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, dir string)
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, dir string)
+	}{
+		{
+			name: "success",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				mockExec(t, "/usr/bin/launchctl", cmdSuccess(""))
+			},
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/launchctl", cmdSuccess(""))
+				plistFile := filepath.Join(dir, "Library", "LaunchAgents", plistServiceName+".plist")
+				_, statErr := os.Stat(plistFile)
+				require.NoError(t, statErr)
+			},
+		},
+		{
+			name: "launchctl fails",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				mockExec(t, "/usr/bin/launchctl", cmdFail(""))
+			},
+			wantErr:     true,
+			errContains: "launchctl bootstrap",
+		},
+		{
+			name: "mkdir fails",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				t.Setenv("HOME", fileAsHome(t))
+			},
+			wantErr:     true,
+			errContains: "create LaunchAgents dir",
+		},
+	}
 
-	b := &macosBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			tc.setup(t, dir)
 
-	err := b.Install(context.Background(), cfg)
+			b := &macosBackend{}
+			cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
 
-	require.NoError(t, err)
+			err := b.Install(context.Background(), cfg)
 
-	plistFile := filepath.Join(dir, "Library", "LaunchAgents", plistServiceName+".plist")
-	_, statErr := os.Stat(plistFile)
-	require.NoError(t, statErr)
-}
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-func TestMacOSBackend_Install_LaunchctlFails(t *testing.T) {
-	dir := t.TempDir()
+				return
+			}
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/launchctl", cmdFail(""))
+			require.NoError(t, err)
 
-	b := &macosBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
-
-	err := b.Install(context.Background(), cfg)
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "launchctl bootstrap")
-}
-
-func TestMacOSBackend_Install_MkdirFails(t *testing.T) {
-	t.Setenv("HOME", fileAsHome(t))
-
-	b := &macosBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
-
-	err := b.Install(context.Background(), cfg)
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "create LaunchAgents dir")
+			if tc.check != nil {
+				tc.check(t, os.Getenv("HOME"))
+			}
+		})
+	}
 }
 
 // --- Uninstall ---
 
-func TestMacOSBackend_Uninstall_Idempotent(t *testing.T) {
-	dir := t.TempDir()
+func TestMacOSBackend_Uninstall(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, dir string)
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, dir string)
+	}{
+		{
+			name: "idempotent when no plist",
+		},
+		{
+			name: "success",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
+				mockExec(t, "/usr/bin/launchctl", cmdSuccess(""))
 
-	b := &macosBackend{}
+				agentsDir := filepath.Join(dir, "Library", "LaunchAgents")
+				err := os.MkdirAll(agentsDir, 0o750)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(agentsDir, plistServiceName+".plist"), []byte("<plist/>"), 0o600)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-	err := b.Uninstall(context.Background())
+				plistFile := filepath.Join(dir, "Library", "LaunchAgents", plistServiceName+".plist")
+				_, statErr := os.Stat(plistFile)
+				require.True(t, os.IsNotExist(statErr))
+			},
+		},
+		{
+			name: "launchctl fails",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
 
-	require.NoError(t, err)
-}
+				mockExec(t, "/usr/bin/launchctl", cmdFail(""))
 
-func TestMacOSBackend_Uninstall_Success(t *testing.T) {
-	dir := t.TempDir()
+				agentsDir := filepath.Join(dir, "Library", "LaunchAgents")
+				err := os.MkdirAll(agentsDir, 0o750)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(agentsDir, plistServiceName+".plist"), []byte("<plist/>"), 0o600)
+				require.NoError(t, err)
+			},
+			wantErr:     true,
+			errContains: "launchctl bootout",
+		},
+		{
+			name: "stat error",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				t.Setenv("HOME", fileAsHome(t))
+			},
+			wantErr:     true,
+			errContains: "stat plist",
+		},
+	}
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/launchctl", cmdSuccess(""))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
 
-	agentsDir := filepath.Join(dir, "Library", "LaunchAgents")
-	err := os.MkdirAll(agentsDir, 0o750)
-	require.NoError(t, err)
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
 
-	plistFile := filepath.Join(agentsDir, plistServiceName+".plist")
-	err = os.WriteFile(plistFile, []byte("<plist/>"), 0o600)
-	require.NoError(t, err)
+			b := &macosBackend{}
 
-	b := &macosBackend{}
+			err := b.Uninstall(context.Background())
 
-	err = b.Uninstall(context.Background())
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-	require.NoError(t, err)
+				return
+			}
 
-	_, statErr := os.Stat(plistFile)
-	require.True(t, os.IsNotExist(statErr))
-}
+			require.NoError(t, err)
 
-func TestMacOSBackend_Uninstall_LaunchctlFails(t *testing.T) {
-	dir := t.TempDir()
-
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/launchctl", cmdFail(""))
-
-	agentsDir := filepath.Join(dir, "Library", "LaunchAgents")
-	err := os.MkdirAll(agentsDir, 0o750)
-	require.NoError(t, err)
-
-	plistFile := filepath.Join(agentsDir, plistServiceName+".plist")
-	err = os.WriteFile(plistFile, []byte("<plist/>"), 0o600)
-	require.NoError(t, err)
-
-	b := &macosBackend{}
-
-	err = b.Uninstall(context.Background())
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "launchctl bootout")
-}
-
-func TestMacOSBackend_Uninstall_StatError(t *testing.T) {
-	t.Setenv("HOME", fileAsHome(t))
-
-	b := &macosBackend{}
-
-	err := b.Uninstall(context.Background())
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "stat plist")
+			if tc.check != nil {
+				tc.check(t, os.Getenv("HOME"))
+			}
+		})
+	}
 }

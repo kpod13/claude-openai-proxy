@@ -8,50 +8,90 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteDefaultConfigIfAbsent_StatError(t *testing.T) {
-	// Set HOME to a regular file so that stat on HOME/filename returns ENOTDIR
-	// (not ENOENT), hitting the non-ErrNotExist error branch.
-	t.Setenv("HOME", fileAsHome(t))
+func TestWriteDefaultConfigIfAbsent(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T) string
+		wantErr     bool
+		errContains string
+		wantCreated bool
+		check       func(t *testing.T, home string)
+	}{
+		{
+			name: "stat error",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				home := fileAsHome(t)
+				t.Setenv("HOME", home)
 
-	_, err := WriteDefaultConfigIfAbsent()
+				return home
+			},
+			wantErr:     true,
+			errContains: "stat config",
+		},
+		{
+			name: "creates file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				t.Setenv("HOME", dir)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "stat config")
-}
+				return dir
+			},
+			wantCreated: true,
+			check: func(t *testing.T, home string) {
+				t.Helper()
 
-func TestWriteDefaultConfigIfAbsent_CreatesFile(t *testing.T) {
-	dir := t.TempDir()
+				content, err := os.ReadFile(filepath.Join(home, defaultConfigName))
+				require.NoError(t, err)
+				require.Contains(t, string(content), "listen:")
+				require.Contains(t, string(content), "127.0.0.1:8080")
+			},
+		},
+		{
+			name: "skips existing file",
+			setup: func(t *testing.T) string {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
+				dir := t.TempDir()
+				t.Setenv("HOME", dir)
 
-	created, err := WriteDefaultConfigIfAbsent()
+				original := []byte("listen: \"0.0.0.0:9090\"\n")
+				err := os.WriteFile(filepath.Join(dir, defaultConfigName), original, 0o600)
+				require.NoError(t, err)
 
-	require.NoError(t, err)
-	require.True(t, created)
+				return dir
+			},
+			wantCreated: false,
+			check: func(t *testing.T, home string) {
+				t.Helper()
 
-	content, err := os.ReadFile(filepath.Join(dir, defaultConfigName))
-	require.NoError(t, err)
-	require.Contains(t, string(content), "listen:")
-	require.Contains(t, string(content), "127.0.0.1:8080")
-}
+				content, err := os.ReadFile(filepath.Join(home, defaultConfigName))
+				require.NoError(t, err)
+				require.Equal(t, []byte("listen: \"0.0.0.0:9090\"\n"), content)
+			},
+		},
+	}
 
-func TestWriteDefaultConfigIfAbsent_SkipsExistingFile(t *testing.T) {
-	dir := t.TempDir()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := tc.setup(t)
 
-	t.Setenv("HOME", dir)
+			created, err := WriteDefaultConfigIfAbsent()
 
-	original := []byte("listen: \"0.0.0.0:9090\"\n")
-	path := filepath.Join(dir, defaultConfigName)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-	err := os.WriteFile(path, original, 0o600)
-	require.NoError(t, err)
+				return
+			}
 
-	created, err := WriteDefaultConfigIfAbsent()
+			require.NoError(t, err)
+			require.Equal(t, tc.wantCreated, created)
 
-	require.NoError(t, err)
-	require.False(t, created)
-
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, original, content)
+			if tc.check != nil {
+				tc.check(t, home)
+			}
+		})
+	}
 }

@@ -60,113 +60,149 @@ func makeCmd(t *testing.T, stub *stubBackend, getVer func(context.Context) (stri
 	}
 }
 
-func TestInstallCmd_PrintsVersionAndConfirmation(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+// --- install subcommand ---
 
-	stub := &stubBackend{}
-	buf, run := makeCmd(t, stub, stubVersion)
+func TestInstallCmd(t *testing.T) {
+	cases := []struct {
+		name        string
+		newBackend  func() (Backend, error)
+		getVer      func(context.Context) (string, error)
+		preSetup    func(t *testing.T)
+		wantErr     bool
+		errIs       error
+		errContains string
+		wantOut     []string
+	}{
+		{
+			name:       "prints version and confirmation",
+			newBackend: func() (Backend, error) { return &stubBackend{}, nil },
+			getVer:     stubVersion,
+			wantOut:    []string{"Claude CLI version: 1.2.3", "Autorun installed for"},
+		},
+		{
+			name:       "version fail prints warning",
+			newBackend: func() (Backend, error) { return &stubBackend{}, nil },
+			getVer:     failVersion,
+			wantOut:    []string{"Warning: could not determine Claude CLI version", "Autorun installed for"},
+		},
+		{
+			name:        "backend error",
+			newBackend:  func() (Backend, error) { return &stubBackend{installErr: errLaunchctlFailed}, nil },
+			getVer:      stubVersion,
+			wantErr:     true,
+			errContains: "launchctl failed",
+		},
+		{
+			name:       "unsupported OS",
+			newBackend: func() (Backend, error) { return nil, ErrUnsupportedOS },
+			getVer:     stubVersion,
+			wantErr:    true,
+			errIs:      ErrUnsupportedOS,
+		},
+		{
+			name:       "writes default config",
+			newBackend: func() (Backend, error) { return &stubBackend{}, nil },
+			getVer:     stubVersion,
+			wantOut:    []string{"Default config written to"},
+		},
+		{
+			name:       "skips existing config",
+			newBackend: func() (Backend, error) { return &stubBackend{}, nil },
+			getVer:     stubVersion,
+			preSetup: func(t *testing.T) {
+				t.Helper()
 
-	err := run("install")
+				_, err := WriteDefaultConfigIfAbsent()
+				require.NoError(t, err)
+			},
+			wantOut: []string{"was not modified"},
+		},
+	}
 
-	require.NoError(t, err)
-	require.True(t, stub.installed)
-	require.Contains(t, buf.String(), "Claude CLI version: 1.2.3")
-	require.Contains(t, buf.String(), "Autorun installed for")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+
+			if tc.preSetup != nil {
+				tc.preSetup(t)
+			}
+
+			var buf bytes.Buffer
+
+			cmd := newCmdWith(&buf, tc.newBackend, tc.getVer)
+			cmd.SilenceErrors = true
+			cmd.SilenceUsage = true
+			cmd.SetArgs([]string{"install"})
+
+			err := cmd.Execute()
+
+			if tc.wantErr {
+				require.Error(t, err)
+
+				if tc.errIs != nil {
+					require.ErrorIs(t, err, tc.errIs)
+				}
+
+				if tc.errContains != "" {
+					require.Contains(t, err.Error(), tc.errContains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			for _, s := range tc.wantOut {
+				require.Contains(t, buf.String(), s)
+			}
+		})
+	}
 }
 
-func TestInstallCmd_VersionFailPrintsWarning(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+// --- uninstall subcommand ---
 
-	stub := &stubBackend{}
-	buf, run := makeCmd(t, stub, failVersion)
+func TestUninstallCmd(t *testing.T) {
+	cases := []struct {
+		name        string
+		stub        *stubBackend
+		wantErr     bool
+		errContains string
+		wantOut     string
+	}{
+		{
+			name:    "prints confirmation",
+			stub:    &stubBackend{},
+			wantOut: "Autorun uninstalled",
+		},
+		{
+			name:        "backend error",
+			stub:        &stubBackend{uninstallErr: errUnloadFailed},
+			wantErr:     true,
+			errContains: "unload failed",
+		},
+	}
 
-	err := run("install")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf, run := makeCmd(t, tc.stub, stubVersion)
 
-	require.NoError(t, err)
-	require.Contains(t, buf.String(), "Warning: could not determine Claude CLI version")
-	require.Contains(t, buf.String(), "Autorun installed for")
-}
+			err := run("uninstall")
 
-func TestInstallCmd_BackendError(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-	stub := &stubBackend{installErr: errLaunchctlFailed}
-	_, run := makeCmd(t, stub, stubVersion)
+				return
+			}
 
-	err := run("install")
+			require.NoError(t, err)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "launchctl failed")
-}
-
-func TestInstallCmd_UnsupportedOS(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	var buf bytes.Buffer
-
-	cmd := newCmdWith(&buf, func() (Backend, error) { return nil, ErrUnsupportedOS }, stubVersion)
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"install"})
-
-	err := cmd.Execute()
-
-	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrUnsupportedOS))
-}
-
-func TestInstallCmd_WritesDefaultConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	stub := &stubBackend{}
-	buf, run := makeCmd(t, stub, stubVersion)
-
-	err := run("install")
-
-	require.NoError(t, err)
-	require.Contains(t, buf.String(), "Default config written to")
-}
-
-func TestInstallCmd_SkipsExistingConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-
-	_, err := WriteDefaultConfigIfAbsent()
-	require.NoError(t, err)
-
-	stub := &stubBackend{}
-	buf, run := makeCmd(t, stub, stubVersion)
-
-	err = run("install")
-
-	require.NoError(t, err)
-	require.Contains(t, buf.String(), "was not modified")
-}
-
-func TestUninstallCmd_PrintsConfirmation(t *testing.T) {
-	stub := &stubBackend{}
-	buf, run := makeCmd(t, stub, stubVersion)
-
-	err := run("uninstall")
-
-	require.NoError(t, err)
-	require.True(t, stub.uninstalled)
-	require.Contains(t, buf.String(), "Autorun uninstalled")
-}
-
-func TestUninstallCmd_BackendError(t *testing.T) {
-	stub := &stubBackend{uninstallErr: errUnloadFailed}
-	_, run := makeCmd(t, stub, stubVersion)
-
-	err := run("uninstall")
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unload failed")
+			if tc.wantOut != "" {
+				require.Contains(t, buf.String(), tc.wantOut)
+			}
+		})
+	}
 }
 
 func TestNewCmd_ReturnsCobraCommand(t *testing.T) {

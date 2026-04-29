@@ -3,6 +3,7 @@ package autorun
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -74,241 +75,318 @@ func TestLinuxBackend_XDGDesktopPath(t *testing.T) {
 
 // --- systemdAvailable ---
 
-func TestLinuxBackend_SystemdAvailable_LookPathFails(t *testing.T) {
-	mockExec(t, "", nil)
+func TestLinuxBackend_SystemdAvailable(t *testing.T) {
+	cases := []struct {
+		name     string
+		lookPath string
+		cmd      func(context.Context, string, ...string) *exec.Cmd
+		want     bool
+	}{
+		{
+			name:     "lookpath fails",
+			lookPath: "",
+			want:     false,
+		},
+		{
+			name:     "running",
+			lookPath: "/usr/bin/systemctl",
+			cmd:      cmdSuccess("running"),
+			want:     true,
+		},
+		{
+			name:     "degraded",
+			lookPath: "/usr/bin/systemctl",
+			cmd:      cmdFail("degraded"),
+			want:     true,
+		},
+		{
+			name:     "stopped",
+			lookPath: "/usr/bin/systemctl",
+			cmd:      cmdFail("stopped"),
+			want:     false,
+		},
+	}
 
-	b := &linuxBackend{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockExec(t, tc.lookPath, tc.cmd)
 
-	require.False(t, b.systemdAvailable(context.Background()))
-}
+			b := &linuxBackend{}
 
-func TestLinuxBackend_SystemdAvailable_Running(t *testing.T) {
-	mockExec(t, "/usr/bin/systemctl", cmdSuccess("running"))
-
-	b := &linuxBackend{}
-
-	require.True(t, b.systemdAvailable(context.Background()))
-}
-
-func TestLinuxBackend_SystemdAvailable_Degraded(t *testing.T) {
-	// systemd is running but some units have failed — still usable.
-	mockExec(t, "/usr/bin/systemctl", cmdFail("degraded"))
-
-	b := &linuxBackend{}
-
-	require.True(t, b.systemdAvailable(context.Background()))
-}
-
-func TestLinuxBackend_SystemdAvailable_Stopped(t *testing.T) {
-	mockExec(t, "/usr/bin/systemctl", cmdFail("stopped"))
-
-	b := &linuxBackend{}
-
-	require.False(t, b.systemdAvailable(context.Background()))
+			require.Equal(t, tc.want, b.systemdAvailable(context.Background()))
+		})
+	}
 }
 
 // --- installSystemd ---
 
-func TestLinuxBackend_InstallSystemd_Success(t *testing.T) {
-	dir := t.TempDir()
+func TestLinuxBackend_InstallSystemd(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, dir string)
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, dir string)
+	}{
+		{
+			name: "success",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
+			},
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
+				unitPath := filepath.Join(dir, ".config", "systemd", "user", linuxUnitName)
+				_, statErr := os.Stat(unitPath)
+				require.NoError(t, statErr)
+			},
+		},
+		{
+			name: "command fails",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				mockExec(t, "/usr/bin/systemctl", cmdFail(""))
+			},
+			wantErr:     true,
+			errContains: "systemctl enable",
+		},
+		{
+			name: "home dir error",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				t.Setenv("HOME", fileAsHome(t))
+				mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
+			},
+			wantErr: true,
+		},
+	}
 
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			tc.setup(t, dir)
 
-	err := b.installSystemd(context.Background(), cfg)
+			b := &linuxBackend{}
+			cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
 
-	require.NoError(t, err)
+			err := b.installSystemd(context.Background(), cfg)
 
-	unitPath := filepath.Join(dir, ".config", "systemd", "user", linuxUnitName)
-	_, statErr := os.Stat(unitPath)
-	require.NoError(t, statErr)
-}
+			if tc.wantErr {
+				require.Error(t, err)
 
-func TestLinuxBackend_InstallSystemd_CommandFails(t *testing.T) {
-	dir := t.TempDir()
+				if tc.errContains != "" {
+					require.Contains(t, err.Error(), tc.errContains)
+				}
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/systemctl", cmdFail(""))
+				return
+			}
 
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+			require.NoError(t, err)
 
-	err := b.installSystemd(context.Background(), cfg)
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "systemctl enable")
-}
-
-func TestLinuxBackend_InstallSystemd_HomeDirError(t *testing.T) {
-	t.Setenv("HOME", fileAsHome(t))
-	mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
-
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
-
-	err := b.installSystemd(context.Background(), cfg)
-
-	require.Error(t, err)
+			if tc.check != nil {
+				tc.check(t, dir)
+			}
+		})
+	}
 }
 
 // --- installXDG ---
 
-func TestLinuxBackend_InstallXDG_Success(t *testing.T) {
-	dir := t.TempDir()
+func TestLinuxBackend_InstallXDG(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, dir string)
+		wantErr     bool
+		check       func(t *testing.T, dir string)
+	}{
+		{
+			name: "success",
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
+				desktopPath := filepath.Join(dir, ".config", "autostart", linuxDesktopName)
+				_, statErr := os.Stat(desktopPath)
+				require.NoError(t, statErr)
+			},
+		},
+		{
+			name: "home dir error",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				t.Setenv("HOME", fileAsHome(t))
+			},
+			wantErr: true,
+		},
+	}
 
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
 
-	err := b.installXDG(cfg)
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
 
-	require.NoError(t, err)
+			b := &linuxBackend{}
+			cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
 
-	desktopPath := filepath.Join(dir, ".config", "autostart", linuxDesktopName)
-	_, statErr := os.Stat(desktopPath)
-	require.NoError(t, statErr)
-}
+			err := b.installXDG(cfg)
 
-func TestLinuxBackend_InstallXDG_HomeDirError(t *testing.T) {
-	t.Setenv("HOME", fileAsHome(t))
+			if tc.wantErr {
+				require.Error(t, err)
 
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+				return
+			}
 
-	err := b.installXDG(cfg)
+			require.NoError(t, err)
 
-	require.Error(t, err)
+			if tc.check != nil {
+				tc.check(t, dir)
+			}
+		})
+	}
 }
 
 // --- Install ---
 
-func TestLinuxBackend_Install_ViaSystemd(t *testing.T) {
-	dir := t.TempDir()
+func TestLinuxBackend_Install(t *testing.T) {
+	cases := []struct {
+		name     string
+		lookPath string
+	}{
+		{
+			name:     "via systemd",
+			lookPath: "/usr/bin/systemctl",
+		},
+		{
+			// LookPath fails → systemdAvailable returns false → falls through to XDG.
+			name:     "via xdg",
+			lookPath: "",
+		},
+	}
 
-	t.Setenv("HOME", dir)
-	mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			mockExec(t, tc.lookPath, cmdSuccess(""))
 
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
+			b := &linuxBackend{}
+			cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
 
-	err := b.Install(context.Background(), cfg)
+			err := b.Install(context.Background(), cfg)
 
-	require.NoError(t, err)
-}
-
-func TestLinuxBackend_Install_ViaXDG(t *testing.T) {
-	dir := t.TempDir()
-
-	t.Setenv("HOME", dir)
-	// LookPath fails → systemdAvailable returns false → falls through to XDG.
-	mockExec(t, "", nil)
-
-	b := &linuxBackend{}
-	cfg := InstallConfig{BinaryPath: "/bin/proxy", Label: "test"}
-
-	err := b.Install(context.Background(), cfg)
-
-	require.NoError(t, err)
+			require.NoError(t, err)
+		})
+	}
 }
 
 // --- Uninstall ---
 
-func TestLinuxBackend_Uninstall_NoFiles(t *testing.T) {
-	dir := t.TempDir()
+func TestLinuxBackend_Uninstall(t *testing.T) {
+	cases := []struct {
+		name        string
+		setup       func(t *testing.T, dir string)
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, dir string)
+	}{
+		{
+			name: "no files",
+		},
+		{
+			name: "removes desktop file",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
+				desktopDir := filepath.Join(dir, ".config", "autostart")
+				err := os.MkdirAll(desktopDir, 0o750)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(desktopDir, linuxDesktopName), []byte("[Desktop Entry]"), 0o600)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-	b := &linuxBackend{}
+				_, statErr := os.Stat(filepath.Join(dir, ".config", "autostart", linuxDesktopName))
+				require.True(t, os.IsNotExist(statErr))
+			},
+		},
+		{
+			name: "XDG remove error",
+			setup: func(t *testing.T, _ string) {
+				t.Helper()
+				t.Setenv("HOME", fileAsHome(t))
+			},
+			wantErr:     true,
+			errContains: "remove XDG desktop",
+		},
+		{
+			name: "systemd success",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
 
-	err := b.Uninstall(context.Background())
+				mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
 
-	require.NoError(t, err)
-}
+				unitDir := filepath.Join(dir, ".config", "systemd", "user")
+				err := os.MkdirAll(unitDir, 0o750)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(unitDir, linuxUnitName), []byte("[Unit]"), 0o600)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, dir string) {
+				t.Helper()
 
-func TestLinuxBackend_Uninstall_RemovesDesktopFile(t *testing.T) {
-	dir := t.TempDir()
+				_, statErr := os.Stat(filepath.Join(dir, ".config", "systemd", "user", linuxUnitName))
+				require.True(t, os.IsNotExist(statErr))
+			},
+		},
+		{
+			name: "systemd command fails",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
 
-	t.Setenv("HOME", dir)
+				mockExec(t, "/usr/bin/systemctl", cmdFail(""))
 
-	desktopDir := filepath.Join(dir, ".config", "autostart")
-	err := os.MkdirAll(desktopDir, 0o750)
-	require.NoError(t, err)
+				unitDir := filepath.Join(dir, ".config", "systemd", "user")
+				err := os.MkdirAll(unitDir, 0o750)
+				require.NoError(t, err)
+				err = os.WriteFile(filepath.Join(unitDir, linuxUnitName), []byte("[Unit]"), 0o600)
+				require.NoError(t, err)
+			},
+			wantErr:     true,
+			errContains: "systemctl disable",
+		},
+	}
 
-	desktopFile := filepath.Join(desktopDir, linuxDesktopName)
-	err = os.WriteFile(desktopFile, []byte("[Desktop Entry]"), 0o600)
-	require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
 
-	b := &linuxBackend{}
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
 
-	err = b.Uninstall(context.Background())
+			b := &linuxBackend{}
 
-	require.NoError(t, err)
+			err := b.Uninstall(context.Background())
 
-	_, statErr := os.Stat(desktopFile)
-	require.True(t, os.IsNotExist(statErr))
-}
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.errContains)
 
-func TestLinuxBackend_Uninstall_RemoveError(t *testing.T) {
-	t.Setenv("HOME", fileAsHome(t))
+				return
+			}
 
-	b := &linuxBackend{}
+			require.NoError(t, err)
 
-	err := b.Uninstall(context.Background())
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "remove XDG desktop")
-}
-
-// --- uninstallSystemd ---
-
-func TestLinuxBackend_UninstallSystemd_Success(t *testing.T) {
-	dir := t.TempDir()
-
-	t.Setenv("HOME", dir)
-
-	unitDir := filepath.Join(dir, ".config", "systemd", "user")
-	err := os.MkdirAll(unitDir, 0o750)
-	require.NoError(t, err)
-
-	unitPath := filepath.Join(unitDir, linuxUnitName)
-	err = os.WriteFile(unitPath, []byte("[Unit]"), 0o600)
-	require.NoError(t, err)
-
-	mockExec(t, "/usr/bin/systemctl", cmdSuccess(""))
-
-	b := &linuxBackend{}
-
-	err = b.Uninstall(context.Background())
-
-	require.NoError(t, err)
-
-	_, statErr := os.Stat(unitPath)
-	require.True(t, os.IsNotExist(statErr))
-}
-
-func TestLinuxBackend_UninstallSystemd_CommandFails(t *testing.T) {
-	dir := t.TempDir()
-
-	t.Setenv("HOME", dir)
-
-	unitDir := filepath.Join(dir, ".config", "systemd", "user")
-	err := os.MkdirAll(unitDir, 0o750)
-	require.NoError(t, err)
-
-	unitPath := filepath.Join(unitDir, linuxUnitName)
-	err = os.WriteFile(unitPath, []byte("[Unit]"), 0o600)
-	require.NoError(t, err)
-
-	mockExec(t, "/usr/bin/systemctl", cmdFail(""))
-
-	b := &linuxBackend{}
-
-	err = b.Uninstall(context.Background())
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "systemctl disable")
+			if tc.check != nil {
+				tc.check(t, os.Getenv("HOME"))
+			}
+		})
+	}
 }

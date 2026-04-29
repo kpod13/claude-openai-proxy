@@ -101,29 +101,46 @@ func TestSanitizeModelID(t *testing.T) {
 
 // --- Version ---
 
-func TestVersion_Success(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", "1.2.3 (Claude Code)")
+func TestVersion(t *testing.T) {
+	cases := []struct {
+		name    string
+		cmd     func(context.Context, string, ...string) *exec.Cmd
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "success",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				return exec.CommandContext(ctx, "echo", "1.2.3 (Claude Code)")
+			},
+			want: "1.2.3 (Claude Code)",
+		},
+		{
+			name:    "command fails",
+			cmd:     failCommand,
+			wantErr: true,
+		},
 	}
 
-	t.Cleanup(func() { newCommand = orig })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := newCommand
+			newCommand = tc.cmd
 
-	ver, err := Version(context.Background())
+			t.Cleanup(func() { newCommand = orig })
 
-	require.NoError(t, err)
-	require.Equal(t, "1.2.3 (Claude Code)", ver)
-}
+			ver, err := Version(context.Background())
 
-func TestVersion_CommandFails(t *testing.T) {
-	orig := newCommand
-	newCommand = failCommand
+			if tc.wantErr {
+				require.Error(t, err)
 
-	t.Cleanup(func() { newCommand = orig })
+				return
+			}
 
-	_, err := Version(context.Background())
-
-	require.Error(t, err)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, ver)
+		})
+	}
 }
 
 // --- RunBlocking ---
@@ -136,31 +153,61 @@ func failCommand(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "false")
 }
 
-func TestRunBlocking_Success(t *testing.T) {
-	orig := newCommand
-	newCommand = echoCommand
+func TestRunBlocking(t *testing.T) {
+	cases := []struct {
+		name    string
+		cmd     func(context.Context, string, ...string) *exec.Cmd
+		model   string
+		wantErr bool
+		check   func(t *testing.T, got *CLIResult)
+	}{
+		{
+			name:  "success",
+			cmd:   echoCommand,
+			model: "claude-sonnet-4-6",
+			check: func(t *testing.T, got *CLIResult) {
+				t.Helper()
+				require.Equal(t, "Hello!", got.Text)
+				require.Equal(t, 5, got.InputTokens)
+			},
+		},
+		{
+			name:    "invalid model",
+			model:   "bad model!",
+			wantErr: true,
+		},
+		{
+			name:    "command fails",
+			cmd:     failCommand,
+			model:   "claude-sonnet-4-6",
+			wantErr: true,
+		},
+	}
 
-	t.Cleanup(func() { newCommand = orig })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cmd != nil {
+				orig := newCommand
+				newCommand = tc.cmd
 
-	got, err := RunBlocking(context.Background(), "claude-sonnet-4-6", "hello")
-	require.NoError(t, err)
-	require.Equal(t, "Hello!", got.Text)
-	require.Equal(t, 5, got.InputTokens)
-}
+				t.Cleanup(func() { newCommand = orig })
+			}
 
-func TestRunBlocking_InvalidModel(t *testing.T) {
-	_, err := RunBlocking(context.Background(), "bad model!", "hello")
-	require.Error(t, err)
-}
+			got, err := RunBlocking(context.Background(), tc.model, "hello")
 
-func TestRunBlocking_CommandFails(t *testing.T) {
-	orig := newCommand
-	newCommand = failCommand
+			if tc.wantErr {
+				require.Error(t, err)
 
-	t.Cleanup(func() { newCommand = orig })
+				return
+			}
 
-	_, err := RunBlocking(context.Background(), "claude-sonnet-4-6", "hello")
-	require.Error(t, err)
+			require.NoError(t, err)
+
+			if tc.check != nil {
+				tc.check(t, got)
+			}
+		})
+	}
 }
 
 // --- RunStreaming ---
@@ -171,53 +218,67 @@ func streamEchoCommand(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "echo", line)
 }
 
-func TestRunStreaming_Success(t *testing.T) {
-	orig := newCommand
-	newCommand = streamEchoCommand
+func TestRunStreaming(t *testing.T) {
+	cases := []struct {
+		name      string
+		cmd       func(context.Context, string, ...string) *exec.Cmd
+		model     string
+		wantErr   bool
+		wantTexts []string
+	}{
+		{
+			name:      "success",
+			cmd:       streamEchoCommand,
+			model:     "claude-sonnet-4-6",
+			wantTexts: []string{"Hello"},
+		},
+		{
+			name:    "invalid model",
+			model:   "bad model!",
+			wantErr: true,
+		},
+		{
+			name: "skips empty and invalid lines",
+			cmd: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+				lines := "\n" +
+					"not json at all\n" +
+					`{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}` + "\n" +
+					`{"type":"result"}`
 
-	t.Cleanup(func() { newCommand = orig })
-
-	ch, err := RunStreaming(context.Background(), "claude-sonnet-4-6", "hello")
-	require.NoError(t, err)
-
-	var texts []string
-
-	for chunk := range ch {
-		require.NoError(t, chunk.Err)
-		texts = append(texts, chunk.Text)
+				return exec.CommandContext(ctx, "echo", lines)
+			},
+			model:     "claude-sonnet-4-6",
+			wantTexts: []string{"Hi"},
+		},
 	}
 
-	require.Equal(t, []string{"Hello"}, texts)
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cmd != nil {
+				orig := newCommand
+				newCommand = tc.cmd
 
-func TestRunStreaming_InvalidModel(t *testing.T) {
-	_, err := RunStreaming(context.Background(), "bad model!", "hello")
-	require.Error(t, err)
-}
+				t.Cleanup(func() { newCommand = orig })
+			}
 
-func TestRunStreaming_SkipsEmptyAndInvalidLines(t *testing.T) {
-	orig := newCommand
-	newCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		// Mix: empty line, invalid JSON, valid assistant message, result.
-		lines := "\n" +
-			"not json at all\n" +
-			`{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}` + "\n" +
-			`{"type":"result"}`
+			ch, err := RunStreaming(context.Background(), tc.model, "hello")
 
-		return exec.CommandContext(ctx, "echo", lines)
+			if tc.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			var texts []string
+
+			for chunk := range ch {
+				require.NoError(t, chunk.Err)
+				texts = append(texts, chunk.Text)
+			}
+
+			require.Equal(t, tc.wantTexts, texts)
+		})
 	}
-
-	t.Cleanup(func() { newCommand = orig })
-
-	ch, err := RunStreaming(context.Background(), "claude-sonnet-4-6", "hello")
-	require.NoError(t, err)
-
-	var texts []string
-
-	for chunk := range ch {
-		require.NoError(t, chunk.Err)
-		texts = append(texts, chunk.Text)
-	}
-
-	require.Equal(t, []string{"Hi"}, texts)
 }

@@ -153,81 +153,117 @@ func TestDebugMiddleware_Headers(t *testing.T) {
 
 // --- DebugRunBlocking ---
 
-func TestDebugRunBlocking_LogsInvokeAndDone(t *testing.T) {
+func TestDebugRunBlocking(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
+	cases := []struct {
+		name        string
+		inner       func(context.Context, string, string) (*CLIResult, error)
+		wantErr     error
+		wantLogMsgs []string
+		checkResult func(t *testing.T, result *CLIResult)
+	}{
+		{
+			name: "logs invoke and done",
+			inner: func(_ context.Context, _, _ string) (*CLIResult, error) {
+				return &CLIResult{Text: "ok", InputTokens: 10, OutputTokens: 5}, nil
+			},
+			wantLogMsgs: []string{"CLI invoke", "CLI done", "claude-sonnet-4-6"},
+			checkResult: func(t *testing.T, result *CLIResult) {
+				t.Helper()
+				require.Equal(t, "ok", result.Text)
+			},
+		},
+		{
+			name: "logs error",
+			inner: func(_ context.Context, _, _ string) (*CLIResult, error) {
+				return nil, errFakeDebugCLI
+			},
+			wantErr:     errFakeDebugCLI,
+			wantLogMsgs: []string{"CLI error"},
+		},
+	}
 
-	wrapped := DebugRunBlocking(debugLogger(&buf), func(_ context.Context, _, _ string) (*CLIResult, error) {
-		return &CLIResult{Text: "ok", InputTokens: 10, OutputTokens: 5}, nil
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	result, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
+			var buf bytes.Buffer
 
-	require.NoError(t, err)
-	require.Equal(t, "ok", result.Text)
+			wrapped := DebugRunBlocking(debugLogger(&buf), tc.inner)
 
-	out := buf.String()
+			result, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
 
-	require.Contains(t, out, "CLI invoke")
-	require.Contains(t, out, "CLI done")
-	require.Contains(t, out, "claude-sonnet-4-6")
-}
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
 
-func TestDebugRunBlocking_LogsError(t *testing.T) {
-	t.Parallel()
+				if tc.checkResult != nil {
+					tc.checkResult(t, result)
+				}
+			}
 
-	var buf bytes.Buffer
-
-	wrapped := DebugRunBlocking(debugLogger(&buf), func(_ context.Context, _, _ string) (*CLIResult, error) {
-		return nil, errFakeDebugCLI
-	})
-
-	_, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
-
-	require.ErrorIs(t, err, errFakeDebugCLI)
-	require.Contains(t, buf.String(), "CLI error")
+			for _, s := range tc.wantLogMsgs {
+				require.Contains(t, buf.String(), s)
+			}
+		})
+	}
 }
 
 // --- DebugRunStreaming ---
 
-func TestDebugRunStreaming_LogsInvokeAndStarted(t *testing.T) {
+func TestDebugRunStreaming(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
+	cases := []struct {
+		name        string
+		inner       func(context.Context, string, string) (<-chan StreamChunk, error)
+		wantErr     error
+		wantLogMsgs []string
+	}{
+		{
+			name: "logs invoke and started",
+			inner: func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
+				ch := make(chan StreamChunk)
+				close(ch)
 
-	ch := make(chan StreamChunk)
+				return ch, nil
+			},
+			wantLogMsgs: []string{"CLI stream", "CLI stream started"},
+		},
+		{
+			name: "logs error",
+			inner: func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
+				return nil, errFakeDebugStream
+			},
+			wantErr:     errFakeDebugStream,
+			wantLogMsgs: []string{"CLI stream error"},
+		},
+	}
 
-	close(ch)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	wrapped := DebugRunStreaming(debugLogger(&buf), func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
-		return ch, nil
-	})
+			var buf bytes.Buffer
 
-	got, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
+			wrapped := DebugRunStreaming(debugLogger(&buf), tc.inner)
 
-	require.NoError(t, err)
-	require.NotNil(t, got)
+			got, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
 
-	out := buf.String()
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+			}
 
-	require.Contains(t, out, "CLI stream")
-	require.Contains(t, out, "CLI stream started")
-}
-
-func TestDebugRunStreaming_LogsError(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-
-	wrapped := DebugRunStreaming(debugLogger(&buf), func(_ context.Context, _, _ string) (<-chan StreamChunk, error) {
-		return nil, errFakeDebugStream
-	})
-
-	_, err := wrapped(context.Background(), "claude-sonnet-4-6", "hello")
-
-	require.ErrorIs(t, err, errFakeDebugStream)
-	require.Contains(t, buf.String(), "CLI stream error")
+			for _, s := range tc.wantLogMsgs {
+				require.Contains(t, buf.String(), s)
+			}
+		})
+	}
 }
 
 // --- maskAuthorization ---
