@@ -26,11 +26,11 @@
 
 ## 5. Verify end to end
 
-- [ ] 5.1 Push a test/pre-release tag and confirm the GitHub Release has archives + `checksums.txt`
-- [ ] 5.2 Confirm `Formula/claude-openai-proxy.rb` is committed/updated in the tap repo with correct url, sha256, version
-- [ ] 5.3 Run `brew install kpod13/tap/claude-openai-proxy` and confirm the binary is on `PATH`
-- [ ] 5.4 Run `brew test claude-openai-proxy` and confirm it passes
-- [ ] 5.5 Confirm `brew upgrade` picks up a subsequent release
+- [x] 5.1 Push a test/pre-release tag and confirm the GitHub Release has archives + `checksums.txt`
+- [x] 5.2 Confirm `Formula/claude-openai-proxy.rb` is committed/updated in the tap repo with correct url, sha256, version
+- [x] 5.3 Run `brew install kpod13/tap/claude-openai-proxy` and confirm the binary is on `PATH`
+- [x] 5.4 Run `brew test claude-openai-proxy` and confirm it passes
+- [x] 5.5 Confirm `brew upgrade` picks up a subsequent release
 
 ## 6. Documentation
 
