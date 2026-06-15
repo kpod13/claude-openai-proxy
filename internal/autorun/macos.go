@@ -3,36 +3,59 @@ package autorun
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
-	"html/template"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"text/template"
 )
 
 const (
 	plistServiceName = "com.claude-openai-proxy"
+
+	// launchAgentPath is the PATH provided to the launchd agent. launchd hands
+	// jobs a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin) that lacks the claude
+	// CLI, so the server would fail model discovery on launch; include the
+	// common Homebrew and system locations so it can find claude.
+	launchAgentPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 )
 
 var (
-	plistTmpl = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+	plistTmpl = template.Must(template.New("plist").Funcs(template.FuncMap{"xml": xmlEscape}).Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>{{ .Label }}</string>
+	<string>{{ xml .Label }}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>{{ .BinaryPath }}</string>
+		<string>{{ xml .BinaryPath }}</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>` + launchAgentPath + `</string>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<false/>
+	<true/>
 </dict>
 </plist>
 `))
 )
+
+// xmlEscape escapes XML special characters in user-controlled values
+// (binary path, label) for safe inclusion in the plist.
+func xmlEscape(s string) string {
+	var b strings.Builder
+	// xml.EscapeText only fails if the writer fails; strings.Builder never does.
+	_ = xml.EscapeText(&b, []byte(s))
+
+	return b.String()
+}
 
 type macosBackend struct{}
 
@@ -50,7 +73,8 @@ func (b *macosBackend) plistPath() (string, error) {
 }
 
 // generatePlist renders the launchd plist XML for the given config.
-// html/template is used to safely escape XML special characters in paths.
+// text/template is used (not html/template, which mangles the <?xml ...?>
+// declaration); user-controlled values are escaped via the xml func.
 func generatePlist(cfg InstallConfig) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -90,6 +114,9 @@ func (b *macosBackend) Install(ctx context.Context, cfg InstallConfig) error {
 
 	out, err := execCommand(ctx, "launchctl", "bootstrap", launchctlTarget(), path).CombinedOutput()
 	if err != nil {
+		// Keep install atomic: don't leave a half-installed plist behind.
+		_ = os.Remove(path)
+
 		return fmt.Errorf("autorun: launchctl bootstrap: %w\n%s", err, out)
 	}
 

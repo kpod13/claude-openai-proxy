@@ -39,10 +39,18 @@ func TestMacOSBackend_PlistContent(t *testing.T) {
 				Label:      "com.claude-openai-proxy",
 			},
 			wantContains: []string{
+				`<?xml version="1.0" encoding="UTF-8"?>`,
 				"<string>com.claude-openai-proxy</string>",
 				"<string>/usr/local/bin/claude-openai-proxy</string>",
+				"<key>EnvironmentVariables</key>",
+				"<key>PATH</key>",
+				"<string>" + launchAgentPath + "</string>",
+				"<key>KeepAlive</key>",
 				"<true/>",
 			},
+			// Regression: html/template used to escape the XML declaration to
+			// "&lt;?xml", producing an invalid plist that launchd rejected (#13).
+			wantNotContains: []string{"<false/>", "&lt;"},
 		},
 		{
 			name: "xml escaping",
@@ -105,13 +113,20 @@ func TestMacOSBackend_Install(t *testing.T) {
 			},
 		},
 		{
-			name: "launchctl fails",
+			name: "launchctl fails removes plist",
 			setup: func(t *testing.T, _ string) {
 				t.Helper()
 				mockExec(t, "/usr/bin/launchctl", cmdFail(""))
 			},
 			wantErr:     true,
 			errContains: "launchctl bootstrap",
+			check: func(t *testing.T, dir string) {
+				t.Helper()
+
+				plistFile := filepath.Join(dir, "Library", "LaunchAgents", plistServiceName+".plist")
+				_, statErr := os.Stat(plistFile)
+				require.True(t, os.IsNotExist(statErr), "plist should be removed on bootstrap failure")
+			},
 		},
 		{
 			name: "mkdir fails",
@@ -138,6 +153,10 @@ func TestMacOSBackend_Install(t *testing.T) {
 			if tc.wantErr {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.errContains)
+
+				if tc.check != nil {
+					tc.check(t, os.Getenv("HOME"))
+				}
 
 				return
 			}

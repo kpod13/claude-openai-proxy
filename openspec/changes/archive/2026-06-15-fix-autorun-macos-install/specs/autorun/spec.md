@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Defines user-level autostart for the proxy across macOS, Linux, and Windows — how `autorun install`/`uninstall` register and remove an OS-appropriate entry that runs the server after login, without root.
-## Requirements
 ### Requirement: autorun install provisions user-level autostart
 `autorun install` SHALL register the proxy binary as a user-level autostart entry that runs after the current user logs in. The mechanism used SHALL be appropriate for the host OS:
 - **macOS**: launchd user agent plist at `~/Library/LaunchAgents/com.claude-openai-proxy.plist`, activated with `launchctl bootstrap gui/<uid>`. The plist SHALL run the proxy as a keep-alive agent (`KeepAlive` enabled) and SHALL set `EnvironmentVariables` `PATH` to include the common CLI locations `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin` so the launched server can locate the `claude` CLI.
@@ -27,13 +25,6 @@ The install command SHALL NOT require root or administrator privileges.
 - **WHEN** `autorun install` is run on Windows
 - **THEN** the registry key `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\claude-openai-proxy` is set to the binary path
 
-### Requirement: autorun fails on unsupported OS
-On operating systems other than macOS, Linux, and Windows, `autorun install` and `autorun uninstall` SHALL exit with a non-zero code and an informative error message.
-
-#### Scenario: Unsupported OS returns error
-- **WHEN** `autorun install` or `autorun uninstall` is run on an unsupported OS
-- **THEN** the command exits with a non-zero code and an error message identifying the OS as unsupported
-
 ### Requirement: autorun uninstall removes the autostart entry
 `autorun uninstall` SHALL remove the autostart entry created by `autorun install`, using the same OS-specific mechanism. It SHALL NOT fail if no entry exists (idempotent).
 
@@ -53,23 +44,7 @@ On operating systems other than macOS, Linux, and Windows, `autorun install` and
 - **WHEN** `autorun uninstall` is run and no entry exists
 - **THEN** the command exits successfully without error
 
-### Requirement: autorun install writes user config if absent
-`autorun install` SHALL write the default config file to `~/.claude-code-openai-server.yaml` if and only if that file does not already exist.
-
-#### Scenario: Config written on first install
-- **WHEN** `autorun install` is run and `~/.claude-code-openai-server.yaml` does not exist
-- **THEN** a default config file is written to that path
-
-#### Scenario: Existing config is not overwritten
-- **WHEN** `autorun install` is run and `~/.claude-code-openai-server.yaml` already exists
-- **THEN** the existing file is left unchanged and a notice is printed
-
-### Requirement: autorun uses current binary path
-The autostart entry SHALL record the absolute path returned by `os.Executable()` at the time `install` is run. If the binary is moved or upgraded, the user must re-run `install`.
-
-#### Scenario: Binary path recorded correctly
-- **WHEN** `autorun install` is run from `/usr/local/bin/claude-openai-proxy`
-- **THEN** the autostart entry references `/usr/local/bin/claude-openai-proxy`
+## ADDED Requirements
 
 ### Requirement: macOS plist is well-formed XML
 The generated macOS LaunchAgent plist SHALL be well-formed XML. In particular, the leading XML declaration (`<?xml version="1.0" encoding="UTF-8"?>`) SHALL be emitted verbatim and not HTML-escaped, while user-controlled values (binary path, label) SHALL be XML-escaped.
@@ -88,4 +63,3 @@ On macOS, if `launchctl bootstrap` fails, `autorun install` SHALL remove the pli
 #### Scenario: Bootstrap failure removes the written plist
 - **WHEN** `autorun install` writes the plist but `launchctl bootstrap` returns an error
 - **THEN** the command exits non-zero AND `~/Library/LaunchAgents/com.claude-openai-proxy.plist` does not remain on disk
-
