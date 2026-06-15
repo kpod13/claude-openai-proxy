@@ -21,13 +21,22 @@ Translates `/v1/chat/completions` and `/v1/models` requests into Claude subproce
 
 ## Installation
 
+**Homebrew (macOS / Linux):**
+
+```bash
+brew tap kpod13/tap
+brew install claude-openai-proxy
+```
+
+Upgrade later with `brew upgrade claude-openai-proxy`.
+
 **From source:**
 
 ```bash
 go install github.com/kpod13/claude-openai-proxy/cmd/claude-openai-proxy@latest
 ```
 
-**Pre-built binaries** are available on the [Releases](../../releases) page for Linux, macOS, and Windows (amd64/arm64).
+**Pre-built archives** are available on the [Releases](../../releases) page for Linux, macOS, Windows, and FreeBSD (amd64/arm64). Each release ships per-platform `.tar.gz`/`.zip` archives plus a `checksums.txt`; download the archive for your platform and extract the `claude-openai-proxy` binary onto your `PATH`.
 
 ## Quick Start
 
@@ -134,6 +143,16 @@ make run     # build and run
 make test    # run tests
 make lint    # run golangci-lint
 ```
+
+## Releasing (maintainers)
+
+Releases run from `.github/workflows/release.yml`. Pushing a `v*.*.*` tag runs lint and tests, builds the cross-platform binaries, packages them into `.tar.gz`/`.zip` archives, publishes a GitHub Release with `checksums.txt`, then regenerates the Homebrew formula (`scripts/update-formula.sh`) and pushes it to the [`kpod13/homebrew-tap`](https://github.com/kpod13/homebrew-tap) repository.
+
+Pushing the formula to that separate repo requires the `HOMEBREW_TAP_TOKEN` Actions secret (the default `GITHUB_TOKEN` cannot push to another repository):
+
+- **Purpose:** lets the release workflow commit `Formula/claude-openai-proxy.rb` to `kpod13/homebrew-tap`.
+- **Scope:** a fine-grained personal access token limited to the `kpod13/homebrew-tap` repository with **Contents: Read and write**.
+- **Rotation:** regenerate the token before it expires (or if leaked) and update the `HOMEBREW_TAP_TOKEN` secret under **Settings → Secrets and variables → Actions**. A failed/expired token surfaces as a failed `release` job; the GitHub Release still succeeds but the formula will not update.
 
 ## License
 
