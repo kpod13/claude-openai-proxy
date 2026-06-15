@@ -8,26 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func makeRegistry(entries map[string]string) *Registry {
-	reg := &Registry{models: make(map[string]string)}
-	seen := map[string]bool{}
-
-	for key, fullID := range entries {
-		reg.models[key] = fullID
-		if !seen[fullID] {
-			seen[fullID] = true
-			reg.list = append(reg.list, ModelObject{
-				ID:      fullID,
-				Object:  "model",
-				Created: 1700000000,
-				OwnedBy: "anthropic",
-			})
-		}
-	}
-
-	return reg
-}
-
 func TestNewRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +63,7 @@ func TestNewRegistry(t *testing.T) {
 func TestRegistryResolve(t *testing.T) {
 	t.Parallel()
 
-	reg := makeRegistry(map[string]string{
+	reg := NewRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",
 		"claude-sonnet-4-6": "claude-sonnet-4-6",
 	})
@@ -143,14 +123,14 @@ func TestRegistryLen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			reg := makeRegistry(tc.entries)
+			reg := NewRegistry(tc.entries)
 			require.Equal(t, tc.want, reg.Len())
 		})
 	}
 }
 
 func TestRegistryList(t *testing.T) {
-	reg := makeRegistry(map[string]string{
+	reg := NewRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",
 		"claude-sonnet-4-6": "claude-sonnet-4-6",
 		"haiku":             "claude-haiku-4-5",

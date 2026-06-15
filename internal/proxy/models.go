@@ -59,28 +59,14 @@ func Discover(aliases []string) *Registry {
 	wg.Wait()
 	close(ch)
 
-	reg := &Registry{
-		models: make(map[string]string),
-	}
-
-	seen := map[string]bool{}
-
+	models := make(map[string]string)
 	for r := range ch {
-		reg.models[r.alias] = r.fullID
-
-		reg.models[r.fullID] = r.fullID
-		if !seen[r.fullID] {
-			seen[r.fullID] = true
-			reg.list = append(reg.list, ModelObject{
-				ID:      r.fullID,
-				Object:  "model",
-				Created: 1700000000,
-				OwnedBy: "anthropic",
-			})
-		}
+		// Register both the alias and the full ID so either resolves.
+		models[r.alias] = r.fullID
+		models[r.fullID] = r.fullID
 	}
 
-	return reg
+	return NewRegistry(models)
 }
 
 // probeAlias runs a minimal claude invocation to resolve an alias to its full model ID.
@@ -151,7 +137,7 @@ func NewRegistry(aliasToFullID map[string]string) *Registry {
 			reg.list = append(reg.list, ModelObject{
 				ID:      fullID,
 				Object:  "model",
-				Created: 1700000000,
+				Created: 0,
 				OwnedBy: "anthropic",
 			})
 		}
