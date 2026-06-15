@@ -19,7 +19,7 @@ func makeRegistry(entries map[string]string) *Registry {
 			reg.list = append(reg.list, ModelObject{
 				ID:      fullID,
 				Object:  "model",
-				Created: 1700000000,
+				Created: 0,
 				OwnedBy: "anthropic",
 			})
 		}

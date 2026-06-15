@@ -74,7 +74,7 @@ func Discover(aliases []string) *Registry {
 			reg.list = append(reg.list, ModelObject{
 				ID:      r.fullID,
 				Object:  "model",
-				Created: 1700000000,
+				Created: 0,
 				OwnedBy: "anthropic",
 			})
 		}
@@ -151,7 +151,7 @@ func NewRegistry(aliasToFullID map[string]string) *Registry {
 			reg.list = append(reg.list, ModelObject{
 				ID:      fullID,
 				Object:  "model",
-				Created: 1700000000,
+				Created: 0,
 				OwnedBy: "anthropic",
 			})
 		}
