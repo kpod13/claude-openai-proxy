@@ -131,7 +131,7 @@ func TestHandlerModels(t *testing.T) {
 		},
 	}
 
-	reg := makeRegistry(map[string]string{
+	reg := NewRegistry(map[string]string{
 		"sonnet":            "claude-sonnet-4-6",
 		"claude-sonnet-4-6": "claude-sonnet-4-6",
 	})
@@ -154,7 +154,7 @@ func TestHandlerModels(t *testing.T) {
 func TestHandlerChatCompletions_BadRequest(t *testing.T) {
 	t.Parallel()
 
-	reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+	reg := NewRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
 	h := &Handler{Registry: reg}
 
 	cases := []struct {
@@ -257,7 +257,7 @@ func TestHandleBlocking(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+			reg := NewRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
 			h := &Handler{Registry: reg, RunBlocking: tc.runBlocking}
 
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -401,7 +401,7 @@ func TestHandleStreaming(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			reg := makeRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
+			reg := NewRegistry(map[string]string{"sonnet": "claude-sonnet-4-6"})
 			h := &Handler{Registry: reg, RunStreaming: tc.runStreaming}
 
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
