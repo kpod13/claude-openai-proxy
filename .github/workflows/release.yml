@@ -67,21 +67,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build binary
+      - name: Build and package archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          BINARY_NAME="claude-openai-proxy-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          BIN="claude-openai-proxy"
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          go build -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "${BIN}${EXT}" ./cmd/claude-openai-proxy
+          mkdir -p dist
+          ARCHIVE="${BIN}_${VERSION}_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            zip "dist/${ARCHIVE}.zip" "${BIN}${EXT}"
+          else
+            tar -czf "dist/${ARCHIVE}.tar.gz" "${BIN}${EXT}"
           fi
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${BINARY_NAME}" ./cmd/claude-openai-proxy
-      - name: Upload binary artifact
+      - name: Upload archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: claude-openai-proxy-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: claude-openai-proxy-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          name: archive-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -92,15 +100,45 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Download all platform binaries
+      - name: Download all archives
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
           merge-multiple: true
-      - name: Create GitHub Release
+      - name: Generate checksums
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --generate-notes \
-            artifacts/*
+          set -euo pipefail
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*
+      - name: Render Homebrew formula
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          scripts/update-formula.sh "$VERSION" dist/checksums.txt formula/claude-openai-proxy.rb
+          cat formula/claude-openai-proxy.rb
+      - name: Push formula to tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/kpod13/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp formula/claude-openai-proxy.rb tap/Formula/claude-openai-proxy.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/claude-openai-proxy.rb
+          if git diff --staged --quiet; then
+            echo "Formula already up to date."
+          else
+            git commit -m "claude-openai-proxy ${GITHUB_REF_NAME}"
+            git push
+          fi
