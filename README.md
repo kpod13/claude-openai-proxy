@@ -28,7 +28,7 @@ brew tap kpod13/tap
 brew install claude-openai-proxy
 ```
 
-Upgrade later with `brew upgrade claude-openai-proxy`.
+Upgrade later with `brew upgrade claude-openai-proxy`. If you've enabled autostart (`autorun install`), the upgrade restarts the running agent automatically so it picks up the new binary.
 
 **From source:**
 
