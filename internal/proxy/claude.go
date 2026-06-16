@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -118,6 +119,74 @@ func RunBlocking(ctx context.Context, model, prompt string) (*CLIResult, error) 
 	return parseBlockingOutput(out)
 }
 
+// streamResultLine is the terminal `result` line from stream-json output.
+type streamResultLine struct {
+	Type   string `json:"type"`
+	Result string `json:"result"`
+	Usage  struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// RunBlockingImages invokes claude with stream-json input (carrying image
+// content blocks) and accumulates the final result. stream-json input requires
+// stream-json output, so the result is read from the terminal `result` line.
+func RunBlockingImages(ctx context.Context, model, payload string) (*CLIResult, error) {
+	safeModel, err := sanitizeModelID(model)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := newCommand(ctx,
+		"claude",
+		"--print",
+		"--input-format", "stream-json",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", safeModel,
+		"--no-session-persistence",
+	)
+	cmd.Stdin = strings.NewReader(payload)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("claude: %w", err)
+	}
+
+	return parseStreamJSONResult(out)
+}
+
+// parseStreamJSONResult extracts the terminal `result` line from stream-json output.
+func parseStreamJSONResult(out []byte) (*CLIResult, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var rl streamResultLine
+
+		err := json.Unmarshal([]byte(line), &rl)
+		if err != nil {
+			continue
+		}
+
+		if rl.Type == "result" {
+			return &CLIResult{
+				Text:         rl.Result,
+				InputTokens:  rl.Usage.InputTokens,
+				OutputTokens: rl.Usage.OutputTokens,
+			}, nil
+		}
+	}
+
+	return nil, errNoJSON
+}
+
 // streamLine is the shape of a single line from claude --output-format stream-json.
 type streamLine struct {
 	Type    string `json:"type"`
@@ -129,23 +198,47 @@ type streamLine struct {
 	} `json:"message"`
 }
 
-// RunStreaming invokes claude in streaming mode and returns a channel of text chunks.
-// The channel is closed when the stream ends or the context is cancelled.
+// RunStreaming invokes claude in streaming mode (text input) and returns a
+// channel of text chunks. The channel is closed when the stream ends or the
+// context is cancelled.
 func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk, error) {
 	safeModel, err := sanitizeModelID(model)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := newCommand(ctx,
-		"claude",
+	return runClaudeStream(ctx, []string{
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--model", safeModel,
 		"--no-session-persistence",
-	)
-	cmd.Stdin = strings.NewReader(prompt)
+	}, prompt)
+}
+
+// RunStreamingImages invokes claude in streaming mode with stream-json input
+// (carrying image content blocks) and returns a channel of text chunks.
+func RunStreamingImages(ctx context.Context, model, payload string) (<-chan StreamChunk, error) {
+	safeModel, err := sanitizeModelID(model)
+	if err != nil {
+		return nil, err
+	}
+
+	return runClaudeStream(ctx, []string{
+		"--print",
+		"--input-format", "stream-json",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", safeModel,
+		"--no-session-persistence",
+	}, payload)
+}
+
+// runClaudeStream starts `claude` with the given args, feeds stdin, and streams
+// assistant text blocks parsed from its stream-json output.
+func runClaudeStream(ctx context.Context, args []string, stdin string) (<-chan StreamChunk, error) {
+	cmd := newCommand(ctx, "claude", args...)
+	cmd.Stdin = strings.NewReader(stdin)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -164,6 +257,8 @@ func RunStreaming(ctx context.Context, model, prompt string) (<-chan StreamChunk
 		defer func() { _ = cmd.Wait() }()
 
 		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {

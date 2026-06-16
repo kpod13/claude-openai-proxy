@@ -8,6 +8,7 @@ Translates `/v1/chat/completions` and `/v1/models` requests into Claude subproce
 
 - Drop-in OpenAI API compatibility (`/v1/chat/completions`, `/v1/models`)
 - Streaming and non-streaming responses
+- Multimodal image input (OpenAI `image_url` parts — base64 `data:` URIs and `http(s)` URLs)
 - OpenAI-compatible rate limiting with `x-ratelimit-*` headers
 - User-level autostart (`autorun install`) for macOS, Linux, Windows
 - Shell autocompletion (bash, zsh, fish, PowerShell)
