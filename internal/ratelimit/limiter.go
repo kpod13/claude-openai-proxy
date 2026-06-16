@@ -101,11 +101,17 @@ func (l *Limiter) Allow(key string, estimatedTokens int) (Info, bool) {
 }
 
 // windowFor returns the window for key, resetting it if the minute has advanced.
+// It opportunistically evicts windows from past minutes so the map does not grow
+// unboundedly with distinct keys (e.g. rotating bearer tokens).
 func (l *Limiter) windowFor(key string, minute time.Time) *window {
 	w, ok := l.windows[key]
 	if !ok {
-		w = &window{}
+		l.evictStale(minute)
+
+		w = &window{minute: minute}
 		l.windows[key] = w
+
+		return w
 	}
 
 	if !w.minute.Equal(minute) {
@@ -115,6 +121,16 @@ func (l *Limiter) windowFor(key string, minute time.Time) *window {
 	}
 
 	return w
+}
+
+// evictStale removes windows belonging to a minute older than the current one.
+// Callers must hold l.mu.
+func (l *Limiter) evictStale(minute time.Time) {
+	for k, w := range l.windows {
+		if w.minute.Before(minute) {
+			delete(l.windows, k)
+		}
+	}
 }
 
 // remainingOrUnlimited returns limit-used when limit > 0, or -1 (unconfigured) otherwise.

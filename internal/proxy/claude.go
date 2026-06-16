@@ -39,6 +39,17 @@ func Version(ctx context.Context) (string, error) {
 	return line, nil
 }
 
+// cliError wraps an exec error, appending captured stderr (from
+// *exec.ExitError) so subprocess failures are diagnosable.
+func cliError(err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		return fmt.Errorf("claude: %w\n%s", err, strings.TrimSpace(string(exitErr.Stderr)))
+	}
+
+	return fmt.Errorf("claude: %w", err)
+}
+
 // sanitizeModelID validates and returns the model ID, allowing only letters, digits, and hyphens.
 // It returns the regex-extracted value so the result is clean from a taint perspective.
 func sanitizeModelID(model string) (string, error) {
@@ -113,7 +124,7 @@ func RunBlocking(ctx context.Context, model, prompt string) (*CLIResult, error) 
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("claude: %w", err)
+		return nil, cliError(err)
 	}
 
 	return parseBlockingOutput(out)
@@ -151,7 +162,7 @@ func RunBlockingImages(ctx context.Context, model, payload string) (*CLIResult, 
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("claude: %w", err)
+		return nil, cliError(err)
 	}
 
 	return parseStreamJSONResult(out)

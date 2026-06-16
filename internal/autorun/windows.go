@@ -4,6 +4,7 @@ package autorun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"golang.org/x/sys/windows/registry"
@@ -39,7 +40,7 @@ func (b *windowsBackend) Install(_ context.Context, cfg InstallConfig) error {
 func (b *windowsBackend) Uninstall(_ context.Context) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, windowsRunKey, registry.SET_VALUE)
 	if err != nil {
-		if err == registry.ErrNotExist {
+		if errors.Is(err, registry.ErrNotExist) {
 			return nil
 		}
 
@@ -49,7 +50,7 @@ func (b *windowsBackend) Uninstall(_ context.Context) error {
 	defer func() { _ = k.Close() }()
 
 	err = k.DeleteValue(windowsValueKey)
-	if err != nil && err != registry.ErrNotExist {
+	if err != nil && !errors.Is(err, registry.ErrNotExist) {
 		return fmt.Errorf("autorun: delete registry value: %w", err)
 	}
 
