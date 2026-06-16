@@ -49,10 +49,10 @@ func TestSerializeMessages(t *testing.T) {
 		{
 			name: "all roles",
 			msgs: []Message{
-				{Role: "system", Content: "You are helpful."},
-				{Role: "user", Content: "Hello"},
-				{Role: "assistant", Content: "Hi there"},
-				{Role: "user", Content: "Bye"},
+				{Role: "system", Content: textContent("You are helpful.")},
+				{Role: "user", Content: textContent("Hello")},
+				{Role: "assistant", Content: textContent("Hi there")},
+				{Role: "user", Content: textContent("Bye")},
 			},
 			wantText: []string{
 				"[System]: You are helpful.",
@@ -63,7 +63,7 @@ func TestSerializeMessages(t *testing.T) {
 		},
 		{
 			name:    "unsupported role",
-			msgs:    []Message{{Role: "tool", Content: "some tool result"}},
+			msgs:    []Message{{Role: "tool", Content: textContent("some tool result")}},
 			wantErr: true,
 		},
 	}
@@ -263,7 +263,7 @@ func TestHandleBlocking(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 
 			if tc.direct {
-				h.handleBlocking(tc.writer, req, "claude-sonnet-4-6", "[User]: hi\n")
+				h.handleBlocking(tc.writer, req, "claude-sonnet-4-6", "[User]: hi\n", false)
 			} else {
 				h.ChatCompletions(tc.writer, req)
 			}
@@ -407,7 +407,7 @@ func TestHandleStreaming(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 
 			if tc.direct {
-				h.handleStreaming(tc.writer, req, "claude-sonnet-4-6", "[User]: hi\n")
+				h.handleStreaming(tc.writer, req, "claude-sonnet-4-6", "[User]: hi\n", false)
 			} else {
 				h.ChatCompletions(tc.writer, req)
 			}

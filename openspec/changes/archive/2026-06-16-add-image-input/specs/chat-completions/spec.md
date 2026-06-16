@@ -1,17 +1,4 @@
-## Purpose
-
-Defines the OpenAI-compatible `POST /v1/chat/completions` endpoint: how requests (text and multimodal) are translated into `claude` CLI invocations and how streaming and non-streaming responses are shaped.
-## Requirements
-### Requirement: Chat completions endpoint
-The server SHALL expose `POST /v1/chat/completions` accepting an OpenAI-compatible request body and returning an OpenAI-compatible response.
-
-#### Scenario: Non-streaming completion
-- **WHEN** a POST request is sent to `/v1/chat/completions` with `"stream": false` (or field absent)
-- **THEN** the server invokes `claude --print --output-format json` and returns a JSON response matching the OpenAI `ChatCompletion` object schema with HTTP 200
-
-#### Scenario: Streaming completion
-- **WHEN** a POST request is sent to `/v1/chat/completions` with `"stream": true`
-- **THEN** the server invokes `claude --print --output-format stream-json --verbose`, streams SSE chunks matching the OpenAI `ChatCompletionChunk` schema, and terminates with `data: [DONE]`
+## MODIFIED Requirements
 
 ### Requirement: Message serialization
 The server SHALL convert the OpenAI `messages` array into input for the `claude` CLI passed via stdin. A message's `content` MAY be a plain string or an array of content parts (`text` and `image_url`). Text-only conversations are serialized into a single prompt string (text input); conversations containing image parts are serialized into stream-json input carrying content blocks.
@@ -32,23 +19,7 @@ The server SHALL convert the OpenAI `messages` array into input for the `claude`
 - **WHEN** a message contains a content part that is neither text nor `image_url` (e.g. `input_audio`)
 - **THEN** the server returns HTTP 400 with a descriptive error
 
-### Requirement: Model selection
-The server SHALL pass the resolved model ID to `claude --model <id>` for each request.
-
-#### Scenario: Valid model in request
-- **WHEN** the request body contains a recognized `model` value
-- **THEN** the CLI is invoked with `--model <resolved-full-id>`
-
-#### Scenario: Invalid model in request
-- **WHEN** the request body contains an unrecognized `model` value
-- **THEN** the server returns HTTP 400 before invoking the CLI
-
-### Requirement: Usage reporting
-The server SHALL populate the `usage` field in non-streaming responses using token counts from the `claude` CLI JSON output.
-
-#### Scenario: Token counts available
-- **WHEN** the CLI returns a `usage` block with `input_tokens` and `output_tokens`
-- **THEN** these are mapped to `prompt_tokens` and `completion_tokens` in the OpenAI response
+## ADDED Requirements
 
 ### Requirement: Image input in chat completions
 The server SHALL accept OpenAI `image_url` content parts and forward them to the `claude` CLI using `--input-format stream-json`, so requests that include images return an OpenAI-compatible completion (streaming and non-streaming) rather than an error.
@@ -68,4 +39,3 @@ The server SHALL accept OpenAI `image_url` content parts and forward them to the
 #### Scenario: Malformed data URI
 - **WHEN** an `image_url` part contains a `data:` URI that cannot be parsed or base64-decoded
 - **THEN** the server returns HTTP 400 with a descriptive error
-
