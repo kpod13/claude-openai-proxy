@@ -208,6 +208,7 @@ func runServer(ctx context.Context, log *slog.Logger, srv *http.Server, serve fu
 	defer stop()
 
 	serveErr := make(chan error, 1)
+
 	go func() { serveErr <- serve(srv) }()
 
 	select {
