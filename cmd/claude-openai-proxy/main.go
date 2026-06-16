@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -64,7 +66,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
@@ -96,6 +98,8 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 			if verbose {
 				h.RunBlocking = proxy.DebugRunBlocking(log, proxy.RunBlocking)
 				h.RunStreaming = proxy.DebugRunStreaming(log, proxy.RunStreaming)
+				h.RunBlockingImages = proxy.DebugRunBlocking(log, proxy.RunBlockingImages)
+				h.RunStreamingImages = proxy.DebugRunStreaming(log, proxy.RunStreamingImages)
 			}
 
 			limiter := ratelimit.New(
@@ -131,12 +135,7 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			log.Info("Starting server", "addr", cfg.Listen)
 
-			err = deps.serve(srv)
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return fmt.Errorf("server error: %w", err)
-			}
-
-			return nil
+			return runServer(cmd.Context(), log, srv, deps.serve)
 		},
 	}
 
@@ -194,6 +193,44 @@ Installation instructions:
 	rootCmd.AddCommand(autorun.NewCmd(stdout))
 
 	return rootCmd
+}
+
+const (
+	// shutdownTimeout bounds how long graceful shutdown waits for in-flight
+	// requests to drain before the process exits.
+	shutdownTimeout = 30 * time.Second
+)
+
+// runServer starts srv via serve and shuts it down gracefully on SIGINT/SIGTERM
+// or when the parent context is cancelled.
+func runServer(ctx context.Context, log *slog.Logger, srv *http.Server, serve func(*http.Server) error) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	serveErr := make(chan error, 1)
+
+	go func() { serveErr <- serve(srv) }()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server error: %w", err)
+		}
+
+		return nil
+	case <-ctx.Done():
+		log.Info("Shutting down...")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		err := srv.Shutdown(shutdownCtx)
+		if err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+
+		return nil
+	}
 }
 
 func main() {

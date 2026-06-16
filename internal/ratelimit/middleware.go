@@ -19,6 +19,10 @@ const (
 	headerRateLimitResetRequests     = "X-Ratelimit-Reset-Requests"
 	headerRateLimitResetTokens       = "X-Ratelimit-Reset-Tokens"       //nolint:gosec // header name, not a credential
 	headerRetryAfter                 = "Retry-After"
+
+	// maxBodyBytes caps the request body the middleware will buffer for token
+	// estimation, bounding memory use from oversized (e.g. base64 image) payloads.
+	maxBodyBytes = 32 << 20 // 32 MiB
 )
 
 // rateLimitError is the OpenAI-compatible error envelope for 429 responses.
@@ -42,7 +46,7 @@ func Middleware(l *Limiter) func(http.Handler) http.Handler {
 		}
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			bodyBytes, err := io.ReadAll(r.Body)
+			bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 			if err != nil {
 				http.Error(w, "failed to read request body", http.StatusBadRequest)
 

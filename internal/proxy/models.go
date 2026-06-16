@@ -1,12 +1,21 @@
 package proxy
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
+	"time"
+)
+
+const (
+	// probeTimeout bounds a single alias probe so a hung claude CLI cannot wedge
+	// startup indefinitely.
+	probeTimeout = 30 * time.Second
 )
 
 // Sentinel errors for model discovery.
@@ -71,7 +80,10 @@ func Discover(aliases []string) *Registry {
 
 // probeAlias runs a minimal claude invocation to resolve an alias to its full model ID.
 func probeAlias(alias string) (string, error) {
-	cmd := newCommand(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+
+	cmd := newCommand(ctx,
 		"claude", "--print", "--output-format", "json", "--model", alias,
 		"--no-session-persistence", ".")
 
@@ -142,6 +154,11 @@ func NewRegistry(aliasToFullID map[string]string) *Registry {
 			})
 		}
 	}
+
+	// Map iteration order is random; sort so /v1/models output is stable across restarts.
+	slices.SortFunc(reg.list, func(a, b ModelObject) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 
 	return reg
 }
