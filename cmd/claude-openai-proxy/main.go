@@ -93,13 +93,19 @@ subprocess calls, allowing OpenAI-compatible clients to use Claude.`,
 
 			log.Info("Models discovered", "count", reg.Len(), "models", modelIDs)
 
+			perm := proxy.PermissionArgs(&cfg.Permission)
+
 			h := &proxy.Handler{Registry: reg}
+			h.RunBlocking = proxy.BlockingRunner(perm)
+			h.RunStreaming = proxy.StreamingRunner(perm)
+			h.RunBlockingImages = proxy.BlockingImagesRunner(perm)
+			h.RunStreamingImages = proxy.StreamingImagesRunner(perm)
 
 			if verbose {
-				h.RunBlocking = proxy.DebugRunBlocking(log, proxy.RunBlocking)
-				h.RunStreaming = proxy.DebugRunStreaming(log, proxy.RunStreaming)
-				h.RunBlockingImages = proxy.DebugRunBlocking(log, proxy.RunBlockingImages)
-				h.RunStreamingImages = proxy.DebugRunStreaming(log, proxy.RunStreamingImages)
+				h.RunBlocking = proxy.DebugRunBlocking(log, h.RunBlocking)
+				h.RunStreaming = proxy.DebugRunStreaming(log, h.RunStreaming)
+				h.RunBlockingImages = proxy.DebugRunBlocking(log, h.RunBlockingImages)
+				h.RunStreamingImages = proxy.DebugRunStreaming(log, h.RunStreamingImages)
 			}
 
 			limiter := ratelimit.New(
