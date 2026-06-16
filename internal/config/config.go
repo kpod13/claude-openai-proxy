@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,18 +18,89 @@ type RateLimit struct {
 	TokensPerMinute   int `yaml:"tokens_per_minute"`
 }
 
+// Permission mode values accepted by the claude CLI --permission-mode flag.
+// These are the only valid values for Permission.Mode.
+const (
+	// ModeDefault asks for permission as usual. Headless (no TTY) tool calls
+	// that need approval will hang, so this is the safe, behavior-preserving
+	// default.
+	ModeDefault = "default"
+	// ModeAcceptEdits auto-accepts file edits but still asks for other tools.
+	ModeAcceptEdits = "acceptEdits"
+	// ModePlan is planning mode; no tools are executed.
+	ModePlan = "plan"
+	// ModeDontAsk does not prompt and relies on the allowed/disallowed lists.
+	ModeDontAsk = "dontAsk"
+	// ModeAuto lets claude decide automatically.
+	ModeAuto = "auto"
+	// ModeBypassPermissions skips all permission checks. DANGER: this is
+	// effectively unauthenticated remote code execution for anyone who can
+	// reach the listener.
+	ModeBypassPermissions = "bypassPermissions"
+)
+
+// Permission holds the optional claude permission policy applied to every
+// claude invocation. The safe default (Mode ModeDefault, empty lists)
+// allowlists no tools and bypasses no permission checks, so headless behavior
+// is unchanged.
+//
+// Mode must be one of the Mode* constants. Each AllowedTools / DisallowedTools
+// entry is a claude tool spec — ToolName or ToolName(rule), e.g. "Write",
+// "Bash(git *)", "mcp__server__tool". AddDirs entries are directory paths.
+type Permission struct {
+	Mode            string   `yaml:"mode"`
+	AllowedTools    []string `yaml:"allowed_tools"`
+	DisallowedTools []string `yaml:"disallowed_tools"`
+	AddDirs         []string `yaml:"add_dirs"`
+}
+
+var (
+	// validPermissionModes is the set of accepted Permission.Mode values,
+	// derived from the Mode* constants so validation and documentation stay
+	// in sync.
+	validPermissionModes = map[string]bool{
+		ModeDefault:           true,
+		ModeAcceptEdits:       true,
+		ModePlan:              true,
+		ModeDontAsk:           true,
+		ModeAuto:              true,
+		ModeBypassPermissions: true,
+	}
+
+	// toolSpecRe matches a claude tool spec: a tool name (built-in like Bash/Edit
+	// or MCP like mcp__server__tool) optionally followed by a parenthesized rule,
+	// e.g. "Write", "Bash(git *)", "WebFetch(domain:example.com)".
+	toolSpecRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\([^)]+\))?$`)
+
+	// errInvalidMode is returned when permission.mode is not a supported value.
+	errInvalidMode = errors.New("config: invalid permission mode " +
+		"(supported: acceptEdits, auto, bypassPermissions, default, dontAsk, plan)")
+
+	// errBlankEntry is returned for an empty or whitespace-only list entry.
+	errBlankEntry = errors.New("config: permission list entry must not be blank")
+
+	// errFlagLikeEntry is returned for a list entry that begins with '-'.
+	errFlagLikeEntry = errors.New("config: permission list entry must not begin with '-'")
+
+	// errInvalidToolSpec is returned for a malformed tool spec.
+	errInvalidToolSpec = errors.New("config: invalid permission tool spec " +
+		"(expected ToolName or ToolName(rule))")
+)
+
 // Config holds server configuration loaded from a YAML file.
 type Config struct {
-	Listen    string    `yaml:"listen"`
-	Aliases   []string  `yaml:"aliases"`
-	RateLimit RateLimit `yaml:"rate_limit"`
+	Listen     string     `yaml:"listen"`
+	Aliases    []string   `yaml:"aliases"`
+	RateLimit  RateLimit  `yaml:"rate_limit"`
+	Permission Permission `yaml:"permission"`
 }
 
 // defaultConfig returns built-in defaults used when no config file is found.
 func defaultConfig() Config {
 	return Config{
-		Listen:  "127.0.0.1:8080",
-		Aliases: []string{"opus", "sonnet", "haiku"},
+		Listen:     "127.0.0.1:8080",
+		Aliases:    []string{"opus", "sonnet", "haiku"},
+		Permission: Permission{Mode: ModeDefault},
 	}
 }
 
@@ -96,5 +169,75 @@ func loadFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 
+	err = cfg.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validate checks the permission policy and normalizes its entries in place.
+// It is called at load time so an invalid policy fails startup before the
+// server binds, rather than failing every request later.
+func (c *Config) validate() error {
+	p := &c.Permission
+
+	if p.Mode == "" {
+		p.Mode = ModeDefault
+	}
+
+	if !validPermissionModes[p.Mode] {
+		return fmt.Errorf("%w: %q", errInvalidMode, p.Mode)
+	}
+
+	err := validateToolSpecs("allowed_tools", p.AllowedTools)
+	if err != nil {
+		return err
+	}
+
+	err = validateToolSpecs("disallowed_tools", p.DisallowedTools)
+	if err != nil {
+		return err
+	}
+
+	return validateAddDirs(p.AddDirs)
+}
+
+// validateToolSpecs validates and trims each tool spec in place.
+func validateToolSpecs(field string, specs []string) error {
+	for i, raw := range specs {
+		spec := strings.TrimSpace(raw)
+
+		switch {
+		case spec == "":
+			return fmt.Errorf("%w (permission.%s)", errBlankEntry, field)
+		case strings.HasPrefix(spec, "-"):
+			return fmt.Errorf("%w: permission.%s %q", errFlagLikeEntry, field, spec)
+		case !toolSpecRe.MatchString(spec):
+			return fmt.Errorf("%w: permission.%s %q", errInvalidToolSpec, field, spec)
+		}
+
+		specs[i] = spec
+	}
+
+	return nil
+}
+
+// validateAddDirs validates and trims each directory entry in place.
+func validateAddDirs(dirs []string) error {
+	for i, raw := range dirs {
+		dir := strings.TrimSpace(raw)
+
+		switch {
+		case dir == "":
+			return fmt.Errorf("%w (permission.add_dirs)", errBlankEntry)
+		case strings.HasPrefix(dir, "-"):
+			return fmt.Errorf("%w: permission.add_dirs %q", errFlagLikeEntry, dir)
+		}
+
+		dirs[i] = dir
+	}
+
+	return nil
 }

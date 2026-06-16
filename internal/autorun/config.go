@@ -17,6 +17,30 @@ aliases:
   - opus
   - sonnet
   - haiku
+
+# Permission policy applied to every headless claude invocation.
+# The default below is the safest: no tools are allowlisted and no permission
+# checks are bypassed, so behavior is identical to a build without this block.
+# Uncomment and tighten to let headless tool calls succeed instead of hang.
+permission:
+  # mode controls how claude handles tool permissions. One of:
+  #   default            ask for permission as usual (headless => tool calls that
+  #                      need approval will hang; the safe default)
+  #   acceptEdits        auto-accept file edits, still ask for other tools
+  #   plan               planning mode; no tools are executed
+  #   dontAsk            do not prompt (relies on allowed/disallowed lists)
+  #   auto               let claude decide automatically
+  #   bypassPermissions  DANGER: skip all permission checks (effectively RCE for
+  #                      anyone who can reach the listener)
+  mode: default
+  # allowed_tools: tool specs allowed without prompting.
+  # Format: ToolName or ToolName(rule), e.g. Write, Edit, "Bash(git *)",
+  # "WebFetch(domain:example.com)", mcp__server__tool.
+  allowed_tools: []
+  # disallowed_tools: tool specs to deny, same format as allowed_tools.
+  disallowed_tools: []
+  # add_dirs: extra directories tools may access (absolute paths recommended).
+  add_dirs: []
 `
 )
 
