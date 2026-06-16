@@ -31,6 +31,20 @@ class ClaudeOpenaiProxy < Formula
     bin.install "claude-openai-proxy"
   end
 
+  # Restart a running autostart agent (installed via `claude-openai-proxy
+  # autorun install`) so an upgrade picks up the new binary. No-op when no
+  # agent is installed. quiet_system never raises, so a failed restart (e.g.
+  # brew run outside the user's GUI session) won't abort the upgrade.
+  def post_install
+    if OS.mac?
+      target = "gui/#{Process.uid}/claude-openai-proxy"
+      quiet_system("launchctl", "kickstart", "-k", target) if quiet_system("launchctl", "print", target)
+    elsif OS.linux?
+      # try-restart is a no-op when the unit is not active.
+      quiet_system("systemctl", "--user", "try-restart", "claude-openai-proxy")
+    end
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/claude-openai-proxy --version")
   end
