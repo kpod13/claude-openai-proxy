@@ -23,14 +23,69 @@ func TestLoad_Permission(t *testing.T) {
 
 	static := []testCase{
 		{
-			name:    "absent block uses safe default",
+			name:    "absent block uses safe default with tool defaults",
 			content: "listen: \"127.0.0.1:8080\"\n",
 			check: func(t *testing.T, cfg *Config) {
 				t.Helper()
 				require.Equal(t, ModeDefault, cfg.Permission.Mode)
+				require.Equal(t, defaultAllowedTools, cfg.Permission.AllowedTools)
+				require.Equal(t, defaultDisallowedTools, cfg.Permission.DisallowedTools)
+				require.Empty(t, cfg.Permission.AddDirs)
+			},
+		},
+		{
+			name:    "empty allowed_tools defaults to web tools",
+			content: "permission:\n  disallowed_tools:\n    - Bash\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, defaultAllowedTools, cfg.Permission.AllowedTools)
+				require.Equal(t, []string{"Bash"}, cfg.Permission.DisallowedTools)
+			},
+		},
+		{
+			name:    "empty disallowed_tools defaults to permission tools",
+			content: "permission:\n  allowed_tools:\n    - Bash\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, []string{"Bash"}, cfg.Permission.AllowedTools)
+				require.Equal(t, defaultDisallowedTools, cfg.Permission.DisallowedTools)
+			},
+		},
+		{
+			name:    "both lists set bypass defaults",
+			content: "permission:\n  allowed_tools:\n    - Read\n  disallowed_tools:\n    - Write\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, []string{"Read"}, cfg.Permission.AllowedTools)
+				require.Equal(t, []string{"Write"}, cfg.Permission.DisallowedTools)
+			},
+		},
+		{
+			name:    "non-default mode skips tool defaults",
+			content: "permission:\n  mode: acceptEdits\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, ModeAcceptEdits, cfg.Permission.Mode)
 				require.Empty(t, cfg.Permission.AllowedTools)
 				require.Empty(t, cfg.Permission.DisallowedTools)
-				require.Empty(t, cfg.Permission.AddDirs)
+			},
+		},
+		{
+			name:    "non-default mode keeps configured lists verbatim",
+			content: "permission:\n  mode: dontAsk\n  allowed_tools:\n    - Bash\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, []string{"Bash"}, cfg.Permission.AllowedTools)
+				require.Empty(t, cfg.Permission.DisallowedTools)
+			},
+		},
+		{
+			name:    "explicit default mode applies tool defaults",
+			content: "permission:\n  mode: default\n",
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				require.Equal(t, defaultAllowedTools, cfg.Permission.AllowedTools)
+				require.Equal(t, defaultDisallowedTools, cfg.Permission.DisallowedTools)
 			},
 		},
 		{
@@ -142,4 +197,27 @@ func TestLoad_Permission(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLoad_PermissionDefaultsNotMutated guards against the substituted default
+// slices being aliased to the package-level vars, which would let one config's
+// in-place normalization leak into another.
+func TestLoad_PermissionDefaultsNotMutated(t *testing.T) {
+	t.Parallel()
+
+	wantAllowed := append([]string(nil), defaultAllowedTools...)
+	wantDisallowed := append([]string(nil), defaultDisallowedTools...)
+
+	dir := t.TempDir()
+	path := writeFile(t, dir, "config.yaml", "permission:\n  mode: default\n")
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	// Mutate the returned slices; the package defaults must stay intact.
+	cfg.Permission.AllowedTools[0] = "Mutated"
+	cfg.Permission.DisallowedTools[0] = "Mutated"
+
+	require.Equal(t, wantAllowed, defaultAllowedTools)
+	require.Equal(t, wantDisallowed, defaultDisallowedTools)
 }

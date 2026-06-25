@@ -3,7 +3,7 @@
 Defines the optional permission policy that controls how the headless `claude` subprocess handles tool permissions: the policy model, its safe defaults, how it maps to `claude` CLI flags, and how it is validated at startup.
 ## Requirements
 ### Requirement: Permission policy configuration
-The server SHALL accept an optional permission policy that controls how the headless `claude` subprocess handles tool permissions. The policy consists of a mode and three lists: allowed tools, disallowed tools, and additional accessible directories.
+The server SHALL accept an optional permission policy that controls how the headless `claude` subprocess handles tool permissions. The policy consists of a mode and three lists: allowed tools, disallowed tools, and additional accessible directories. When mode is `default` and a tool list is empty, the server SHALL substitute a built-in default for that list (see "Safe-by-default policy").
 
 #### Scenario: Policy configured
 - **WHEN** the config specifies a permission `mode` and/or tool lists
@@ -11,18 +11,45 @@ The server SHALL accept an optional permission policy that controls how the head
 
 #### Scenario: Policy absent
 - **WHEN** the config contains no permission policy
-- **THEN** the server applies the safe default policy (mode `default`, no allowlisted tools)
+- **THEN** the server applies mode `default`, the default allowlist (`WebSearch`, `WebFetch`), and the default disallow list (the other permission-requiring tools)
 
 ### Requirement: Safe-by-default policy
-The server SHALL default to the safest permission policy when none is configured: permission mode `default` and empty tool/directory lists, so no tool is newly permitted and headless behavior is unchanged from a build without this feature. The server SHALL NOT default to `bypassPermissions` or any mode that auto-approves tool use.
+The server SHALL default permission `mode` to `default` and SHALL NOT default to `bypassPermissions` or any mode that auto-approves tool use. Under mode `default` only, the server SHALL apply hang-free built-in tool-list defaults per-section, independently, so an operator who configures nothing still gets the low-risk web tools without headless tool calls hanging on an interactive prompt:
 
-#### Scenario: Default mode emitted
-- **WHEN** no permission policy is configured
-- **THEN** the server does not emit an allowlist and does not bypass permission checks
+- When mode is `default` and `allowed_tools` is empty, the server SHALL default it to exactly `WebSearch` and `WebFetch`.
+- When mode is `default` and `disallowed_tools` is empty, the server SHALL default it to exactly the remaining permission-requiring tools: `Artifact`, `Bash`, `Edit`, `ExitPlanMode`, `Monitor`, `NotebookEdit`, `PowerShell`, `ShareOnboardingGuide`, `Skill`, `Workflow`, `Write`.
+- A non-empty list in config SHALL be used verbatim and SHALL NOT be merged with its built-in default.
+- When mode is anything other than `default`, the server SHALL leave empty tool lists empty: a non-default mode is an explicit operator choice (e.g. `acceptEdits`, `bypassPermissions`), and injecting the deny-list defaults would silently override that intent.
 
-#### Scenario: Opt-in required for tool access
-- **WHEN** an operator wants headless tool calls to succeed instead of hang
-- **THEN** they must explicitly allowlist tools or select a less strict mode in config
+Read-only / no-permission tools (e.g. `Read`, `Grep`, `Glob`, `LS`, `LSP`) are intentionally excluded from the default disallow list because they never prompt and therefore never hang.
+
+#### Scenario: Default allowlist applied
+- **WHEN** mode is `default` (configured or absent) and `allowed_tools` is empty or absent
+- **THEN** the policy allowlists exactly `WebSearch` and `WebFetch`
+
+#### Scenario: Default disallow list applied
+- **WHEN** mode is `default` (configured or absent) and `disallowed_tools` is empty or absent
+- **THEN** the policy disallows exactly `Artifact`, `Bash`, `Edit`, `ExitPlanMode`, `Monitor`, `NotebookEdit`, `PowerShell`, `ShareOnboardingGuide`, `Skill`, `Workflow`, and `Write`
+
+#### Scenario: Configured list overrides its default
+- **WHEN** `allowed_tools` is set to a non-empty list in config
+- **THEN** the policy uses that list exactly and does not add the default `WebSearch`/`WebFetch`
+
+#### Scenario: Per-section defaulting is independent
+- **WHEN** mode is `default` and `allowed_tools` is set but `disallowed_tools` is empty
+- **THEN** the policy uses the configured `allowed_tools` and the default disallow list
+
+#### Scenario: Non-default mode skips tool defaults
+- **WHEN** mode is set to a non-`default` value (e.g. `acceptEdits` or `bypassPermissions`) and the tool lists are empty
+- **THEN** the policy leaves both tool lists empty and applies no built-in tool defaults
+
+#### Scenario: Bypass mode never defaulted
+- **WHEN** no permission mode is configured
+- **THEN** the server uses mode `default` and never `bypassPermissions`
+
+#### Scenario: Opt-in still possible for stricter or looser policy
+- **WHEN** an operator wants a different tool set or mode
+- **THEN** they can set `allowed_tools`, `disallowed_tools`, or `mode` in config to override the defaults
 
 ### Requirement: Policy to CLI flag mapping
 The server SHALL translate the configured policy into `claude` CLI flags on every invocation path (blocking text, blocking image, streaming text, streaming image): `mode` maps to `--permission-mode`, `allowed_tools` to `--allowedTools`, `disallowed_tools` to `--disallowedTools`, and `add_dirs` to `--add-dir`. Empty lists and the default mode produce no corresponding flags.
@@ -77,3 +104,4 @@ The server SHALL validate the entire permission policy at startup, before servin
 #### Scenario: Validation runs before serving
 - **WHEN** the permission config is invalid
 - **THEN** the server does not bind the listener or accept any request
+

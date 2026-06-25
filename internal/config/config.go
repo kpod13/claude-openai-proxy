@@ -40,9 +40,14 @@ const (
 )
 
 // Permission holds the optional claude permission policy applied to every
-// claude invocation. The safe default (Mode ModeDefault, empty lists)
-// allowlists no tools and bypasses no permission checks, so headless behavior
-// is unchanged.
+// claude invocation. Mode defaults to ModeDefault (never bypasses permission
+// checks). Under ModeDefault each tool list defaults independently when left
+// empty: an empty AllowedTools becomes defaultAllowedTools and an empty
+// DisallowedTools becomes defaultDisallowedTools, giving a hang-free policy out
+// of the box. A non-empty list is used verbatim and is never merged with its
+// default. Any other Mode is taken as an explicit operator choice and its empty
+// lists are left untouched, so the deny-list defaults cannot silently override
+// modes like acceptEdits or bypassPermissions.
 //
 // Mode must be one of the Mode* constants. Each AllowedTools / DisallowedTools
 // entry is a claude tool spec — ToolName or ToolName(rule), e.g. "Write",
@@ -85,6 +90,21 @@ var (
 	// errInvalidToolSpec is returned for a malformed tool spec.
 	errInvalidToolSpec = errors.New("config: invalid permission tool spec " +
 		"(expected ToolName or ToolName(rule))")
+
+	// defaultAllowedTools is substituted for an empty permission.allowed_tools.
+	// These low-risk web tools are pre-approved so they run headlessly without an
+	// interactive prompt that would hang the request.
+	defaultAllowedTools = []string{"WebSearch", "WebFetch"}
+
+	// defaultDisallowedTools is substituted for an empty permission.disallowed_tools.
+	// It lists the remaining permission-requiring claude tools (everything that
+	// would otherwise prompt, minus the allowlisted web tools), so headless
+	// requests fail fast instead of hanging. Read-only / no-permission tools
+	// (Read, Grep, Glob, ...) are intentionally omitted: they never prompt.
+	defaultDisallowedTools = []string{
+		"Artifact", "Bash", "Edit", "ExitPlanMode", "Monitor", "NotebookEdit",
+		"PowerShell", "ShareOnboardingGuide", "Skill", "Workflow", "Write",
+	}
 )
 
 // Config holds server configuration loaded from a YAML file.
@@ -129,6 +149,11 @@ func Load(path string) (*Config, error) {
 	}
 
 	def := defaultConfig()
+
+	err := def.validate()
+	if err != nil {
+		return nil, err
+	}
 
 	return &def, nil
 }
@@ -189,6 +214,22 @@ func (c *Config) validate() error {
 
 	if !validPermissionModes[p.Mode] {
 		return fmt.Errorf("%w: %q", errInvalidMode, p.Mode)
+	}
+
+	// Substitute built-in tool defaults per-section before validation, so an
+	// empty section yields a hang-free policy and the defaults are validated like
+	// any other entry. Only do this under ModeDefault: any other mode is an
+	// explicit operator choice (e.g. acceptEdits, bypassPermissions) whose intent
+	// the deny-list defaults would silently override, so leave its lists as-is.
+	// Copy the shared slices so in-place trimming never mutates them.
+	if p.Mode == ModeDefault {
+		if len(p.AllowedTools) == 0 {
+			p.AllowedTools = append([]string(nil), defaultAllowedTools...)
+		}
+
+		if len(p.DisallowedTools) == 0 {
+			p.DisallowedTools = append([]string(nil), defaultDisallowedTools...)
+		}
 	}
 
 	err := validateToolSpecs("allowed_tools", p.AllowedTools)

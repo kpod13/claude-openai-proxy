@@ -163,7 +163,14 @@ permission:
 | `auto`              | Let Claude decide automatically.                                                                                              |
 | `bypassPermissions` | Skip all permission checks (**dangerous** — see warning below).                                                               |
 
-The default is the **safest** policy (`mode: default`, no allowlisted tools): behavior is identical to a build without this feature, and nothing is permitted unless you opt in. To make headless tool calls succeed instead of hang, allowlist the specific tools (`allowed_tools`) or pick a less strict `mode`.
+**Under `mode: default` only** (the default, including when no `permission` block is set), the proxy substitutes a hang-free default for any tool list left empty, **independently per section**:
+
+- empty `allowed_tools` → `WebSearch`, `WebFetch` (low-risk web tools, pre-approved so they don't prompt)
+- empty `disallowed_tools` → the other permission-requiring tools: `Artifact`, `Bash`, `Edit`, `ExitPlanMode`, `Monitor`, `NotebookEdit`, `PowerShell`, `ShareOnboardingGuide`, `Skill`, `Workflow`, `Write`
+
+Read-only tools (`Read`, `Grep`, `Glob`, …) are left available — they never prompt, so they never hang. A non-empty list is used verbatim and is **not** merged with its default, so set `allowed_tools` / `disallowed_tools` explicitly to override these defaults (an empty inline list like `disallowed_tools: []` counts as empty and still gets the default — list at least one entry to opt out).
+
+Any **other** `mode` (`acceptEdits`, `auto`, `dontAsk`, `bypassPermissions`, `plan`) is treated as an explicit choice: empty tool lists are left empty, so the deny-list defaults can't silently override the mode you picked. Combine such a mode with your own `allowed_tools` / `disallowed_tools` as needed.
 
 The whole block is validated at startup — an unknown `mode`, a malformed tool spec, a blank entry, or any entry beginning with `-` fails fast before the server binds. Tool specs follow the `claude` format: `ToolName` or `ToolName(rule)` (e.g. `Write`, `Bash(git *)`, `mcp__server__tool`).
 
